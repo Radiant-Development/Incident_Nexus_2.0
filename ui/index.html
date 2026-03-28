@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incident Nexus</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+
+        #dispatch {
+            display: none;
+            position: absolute;
+            top: 5%;
+            right: 3%;
+            width: 320px;
+            padding: 16px;
+            border-radius: 12px;
+            background: rgba(15, 15, 15, 0.85);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        h2, p {
+            margin: 0 0 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="dispatch">
+        <h2 id="dispatch-title">Incident Nexus</h2>
+        <p id="dispatch-message">Standby</p>
+    </div>
+
+    <script>
+        window.addEventListener('message', function(event) {
+            const data = event.data;
+
+            if (data.action === 'showDispatch') {
+                document.getElementById('dispatch').style.display = 'block';
+                document.getElementById('dispatch-title').innerText = data.title || 'Dispatch Alert';
+                document.getElementById('dispatch-message').innerText = data.message || 'No message';
+            }
+
+            if (data.action === 'hideDispatch') {
+                document.getElementById('dispatch').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
