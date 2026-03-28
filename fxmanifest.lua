@@ -4,15 +4,7 @@ game 'gta5'
 name 'Incident Nexus'
 author 'RebelGamer2k20'
 description 'Incident Nexus - Standalone Edition'
-version '1.0.0'
-
-ui_page 'ui/index.html'
-
-files {
-    'ui/index.html',
-    'ui/dispatch.html',
-    'ui/screensaver.html'
-}
+version '1.4.0'
 
 shared_scripts {
     'config.lua'
@@ -26,6 +18,14 @@ client_scripts {
 
 server_scripts {
     'server/main.lua'
+}
+
+ui_page 'ui/index.html'
+
+files {
+    'ui/index.html',
+    'ui/dispatch.html',
+    'ui/screensaver.html'
 }
 
 escrow_ignore {
