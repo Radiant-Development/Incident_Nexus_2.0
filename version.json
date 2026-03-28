@@ -1,4 +1,4 @@
 {
-  "version": "1.0.4",
-  "changelog": "Added phase 4 Door Naming and apparatus Assignment ."
+  "version": "1.0.4.2",
+  "changelog": "Fixed Issue with Doors and Targeting luas ."
 }
