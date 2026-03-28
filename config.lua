@@ -4,10 +4,6 @@ Config.Debug = true
 
 Config.ResourceName = 'incident-nexus'
 Config.DisplayName = 'Incident Nexus'
-Config.Version = '1.0.0'
-Config.Locale = 'en-us'
-
-Config.Standalone = true
 
 Config.Commands = {
     Builder = 'incidentbuilder',
@@ -17,25 +13,38 @@ Config.Commands = {
 }
 
 Config.Keys = {
-    Interact = 38, -- E
-    SaveDraft = 47 -- G
+    Interact = 38,
+    SaveDraft = 47,
+    CycleOption = 174,
+    CycleOptionBack = 175,
+    Confirm = 191,
+    Cancel = 194
 }
 
 Config.DrawDistance = 25.0
 Config.InteractionDistance = 2.0
 
-Config.Paths = {
-    Drafts = 'data/drafts/',
-    Stations = 'data/stations/'
-}
-
-Config.VersionCheck = {
-    Enabled = true,
-    URL = 'https://raw.githubusercontent.com/YourGithub/incident-nexus/main/version.json'
-}
+Config.DraftFolder = 'draftlocations'
+Config.LocationsResource = 'nexus_locations'
 
 Config.DefaultStation = {
     name = 'New Station',
     department = 'fire',
     stationType = 'fire_station'
+}
+
+Config.Departments = {
+    'fire',
+    'police',
+    'ems',
+    'dispatch',
+    'custom'
+}
+
+Config.StationTypes = {
+    'fire_station',
+    'police_station',
+    'ems_station',
+    'dispatch_center',
+    'custom'
 }
