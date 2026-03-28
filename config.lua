@@ -83,38 +83,31 @@ Config.ApparatusPresets = {
 }
 
 Config.PropModels = {
-    { label = 'Door Control Panel', model = 'prop_ic_door_controls', type = 'door_control', category = 'door_controls' },
 
-    { label = 'Warning Light', model = 'prop_ic_warning_lights', type = 'warning_light', category = 'warning_lights' },
-    { label = 'Bollard Light Off', model = 'prop_ic_bollard_light_off', type = 'warning_light', category = 'warning_lights' },
-    { label = 'Bollard Light On', model = 'prop_ic_bollard_light_on', type = 'warning_light', category = 'warning_lights' },
-    { label = 'Wall Light', model = 'prop_ic_wall_light', type = 'warning_light', category = 'warning_lights' },
+-- Dispatch Screens
+{ label = 'Dispatch Monitor', model = 'prop_monitor_01a', type = 'dispatch_screen' },
+{ label = 'Wall TV', model = 'prop_tv_flat_02', type = 'dispatch_screen' },
+{ label = 'Laptop', model = 'prop_laptop_lester2', type = 'dispatch_screen' },
 
-    { label = 'Status Light Green', model = 'prop_ic_status_lights_green', type = 'status_light', category = 'status_lights' },
-    { label = 'Status Light Off', model = 'prop_ic_status_lights_off', type = 'status_light', category = 'status_lights' },
-    { label = 'Status Light Red', model = 'prop_ic_status_lights_red', type = 'status_light', category = 'status_lights' },
+-- Door Controls
+{ label = 'Keypad', model = 'prop_cs_keypad_01', type = 'door_control' },
+{ label = 'Security Panel', model = 'prop_ld_keypad_01', type = 'door_control' },
 
-    { label = 'Traffic Light Green', model = 'prop_ic_traffic_light_g', type = 'traffic_light', category = 'traffic_lights' },
-    { label = 'Traffic Light Red', model = 'prop_ic_traffic_light_r', type = 'traffic_light', category = 'traffic_lights' },
-    { label = 'Traffic Light Yellow', model = 'prop_ic_traffic_light_y', type = 'traffic_light', category = 'traffic_lights' },
-    { label = 'Addon Traffic Light Neutral', model = 'prop_ic_addon_traffic_light_n', type = 'traffic_light', category = 'traffic_lights' },
-    { label = 'Addon Traffic Light Red', model = 'prop_ic_addon_traffic_light_r', type = 'traffic_light', category = 'traffic_lights' },
-    { label = 'Addon Traffic Light Yellow Flash', model = 'prop_ic_addon_traffic_light_y_f', type = 'traffic_light', category = 'traffic_lights' },
-    { label = 'Addon Traffic Light Yellow Solid', model = 'prop_ic_addon_traffic_light_y_s', type = 'traffic_light', category = 'traffic_lights' },
+-- Warning Lights
+{ label = 'Work Light', model = 'prop_worklight_03b', type = 'warning_light' },
+{ label = 'Wall Light', model = 'prop_wall_light_05a', type = 'warning_light' },
 
-    { label = 'Unit Beacon Default', model = 'prop_ic_unit_beacon', type = 'unit_beacon', category = 'unit_beacons' },
-    { label = 'Unit Beacon Blue', model = 'prop_ic_unit_beacon_b', type = 'unit_beacon', category = 'unit_beacons' },
-    { label = 'Unit Beacon Green', model = 'prop_ic_unit_beacon_g', type = 'unit_beacon', category = 'unit_beacons' },
-    { label = 'Unit Beacon Magenta', model = 'prop_ic_unit_beacon_m', type = 'unit_beacon', category = 'unit_beacons' },
-    { label = 'Unit Beacon Red', model = 'prop_ic_unit_beacon_r', type = 'unit_beacon', category = 'unit_beacons' },
-    { label = 'Unit Beacon Yellow', model = 'prop_ic_unit_beacon_y', type = 'unit_beacon', category = 'unit_beacons' },
+-- Traffic Lights
+{ label = 'Traffic Light 1', model = 'prop_traffic_01a', type = 'traffic_light' },
+{ label = 'Traffic Light 2', model = 'prop_traffic_01b', type = 'traffic_light' },
 
-    { label = 'Unit Indicator Default', model = 'prop_ic_unit_indicator', type = 'unit_indicator', category = 'unit_indicators' },
-    { label = 'Unit Indicator Blue', model = 'prop_ic_unit_indicator_b', type = 'unit_indicator', category = 'unit_indicators' },
-    { label = 'Unit Indicator Green', model = 'prop_ic_unit_indicator_g', type = 'unit_indicator', category = 'unit_indicators' },
-    { label = 'Unit Indicator Magenta', model = 'prop_ic_unit_indicator_m', type = 'unit_indicator', category = 'unit_indicators' },
-    { label = 'Unit Indicator Red', model = 'prop_ic_unit_indicator_r', type = 'unit_indicator', category = 'unit_indicators' },
-    { label = 'Unit Indicator Yellow', model = 'prop_ic_unit_indicator_y', type = 'unit_indicator', category = 'unit_indicators' },
+-- Station Lights
+{ label = 'Industrial Light', model = 'prop_ind_light_02a', type = 'station_light' },
+{ label = 'Bay Light', model = 'prop_ind_light_03a', type = 'station_light' },
 
-    { label = 'Dispatch Screen', model = 'xm_prop_x17_tv_ceiling_scn_02', type = 'dispatch_screen', category = 'screens' }
+-- Fire Station Props
+{ label = 'Fire Extinguisher', model = 'prop_fire_exting_1a', type = 'equipment' },
+{ label = 'Fire Hose Box', model = 'prop_fire_hosebox_01', type = 'equipment' },
+{ label = 'Tool Chest', model = 'prop_toolchest_01', type = 'equipment' }
+
 }
