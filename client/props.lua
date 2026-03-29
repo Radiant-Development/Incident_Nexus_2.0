@@ -83,26 +83,51 @@ local function deletePreview()
     PropState.PreviewNormal = nil
 end
 
-local function applyPreviewTransform(entity, coords, normal)
+local function normalToRotation(normal, heading)
+    heading = heading or 0.0
+
+    if not normal then
+        return 0.0, 0.0, heading
+    end
+
+    local pitch = math.deg(math.atan2(normal.x, normal.z))
+    local roll = -math.deg(math.atan2(normal.y, normal.z))
+
+    return pitch, roll, heading
+end
+
+local function applyEntitySurfaceTransform(entity, coords, normal)
     if not entity or not DoesEntityExist(entity) or not coords then
         return
     end
 
-    SetEntityCoordsNoOffset(entity, coords.x, coords.y, coords.z, false, false, false)
+    local nx = normal and normal.x or 0.0
+    local ny = normal and normal.y or 0.0
+    local nz = normal and normal.z or 1.0
 
-    if normal then
-        local absZ = math.abs(normal.z)
+    local offset = 0.02
 
-        if absZ > 0.85 then
-            SetEntityRotation(entity, 0.0, 0.0, PropState.PreviewHeading, 2, true)
-        elseif absZ < 0.2 then
-            SetEntityRotation(entity, 90.0, 0.0, PropState.PreviewHeading, 2, true)
-        else
-            SetEntityRotation(entity, 45.0, 0.0, PropState.PreviewHeading, 2, true)
-        end
-    else
-        SetEntityRotation(entity, 0.0, 0.0, PropState.PreviewHeading, 2, true)
-    end
+    local placeX = coords.x + (nx * offset)
+    local placeY = coords.y + (ny * offset)
+    local placeZ = coords.z + (nz * offset)
+
+    SetEntityCoordsNoOffset(entity, placeX, placeY, placeZ, false, false, false)
+
+    local pitch, roll, yaw = normalToRotation(normal, PropState.PreviewHeading)
+    SetEntityRotation(entity, pitch, roll, yaw, 2, true)
+
+    FreezeEntityPosition(entity, true)
+    SetEntityCollision(entity, true, true)
+    SetEntityDynamic(entity, false)
+    SetEntityHasGravity(entity, false)
+end
+
+local function setupPreviewEntity(entity)
+    SetEntityAlpha(entity, 180, false)
+    SetEntityCollision(entity, false, false)
+    SetEntityDynamic(entity, false)
+    SetEntityHasGravity(entity, false)
+    FreezeEntityPosition(entity, true)
 end
 
 local function createPreview()
@@ -120,19 +145,20 @@ local function createPreview()
 
     local hit, coords, normal = raycastFromCamera(Config.SelectionDistance)
     if not hit or not coords then
+        SetModelAsNoLongerNeeded(modelHash)
         return
     end
 
-    local obj = CreateObject(modelHash, coords.x, coords.y, coords.z, false, false, false)
-    SetEntityAlpha(obj, 180, false)
-    SetEntityCollision(obj, false, false)
-    FreezeEntityPosition(obj, true)
+    local obj = CreateObjectNoOffset(modelHash, coords.x, coords.y, coords.z, false, false, false)
+    setupPreviewEntity(obj)
 
     PropState.PreviewEntity = obj
     PropState.PreviewCoords = coords
     PropState.PreviewNormal = normal
 
-    applyPreviewTransform(obj, coords, normal)
+    applyEntitySurfaceTransform(obj, coords, normal)
+    SetEntityCollision(obj, false, false)
+
     SetModelAsNoLongerNeeded(modelHash)
 end
 
@@ -154,7 +180,9 @@ local function updatePreview()
         return
     end
 
-    applyPreviewTransform(PropState.PreviewEntity, coords, normal)
+    applyEntitySurfaceTransform(PropState.PreviewEntity, coords, normal)
+    SetEntityCollision(PropState.PreviewEntity, false, false)
+    SetEntityAlpha(PropState.PreviewEntity, 180, false)
 end
 
 local function drawPlacement()
@@ -177,7 +205,7 @@ local function drawPlacement()
         target.x, target.y, target.z,
         0.0, 0.0, 0.0,
         0.0, 0.0, 0.0,
-        0.2, 0.2, 0.2,
+        0.20, 0.20, 0.20,
         0, 150, 255, 125,
         false, false, 2, false, nil, nil, false
     )
@@ -201,10 +229,13 @@ local function placeProp(stationId)
         return
     end
 
-    local obj = CreateObject(modelHash, coords.x, coords.y, coords.z, true, true, false)
+    local obj = CreateObjectNoOffset(modelHash, coords.x, coords.y, coords.z, true, true, false)
+
+    SetEntityDynamic(obj, false)
+    SetEntityHasGravity(obj, false)
     FreezeEntityPosition(obj, true)
 
-    applyPreviewTransform(obj, coords, normal)
+    applyEntitySurfaceTransform(obj, coords, normal)
 
     local finalCoords = GetEntityCoords(obj)
     local rot = GetEntityRotation(obj, 2)

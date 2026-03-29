@@ -23,7 +23,7 @@ Config.Keys = {
 
 Config.DrawDistance = 25.0
 Config.InteractionDistance = 2.0
-Config.SelectionDistance = 20.0
+Config.SelectionDistance = 6.0
 
 Config.DraftFolder = 'draftlocations'
 Config.LocationsResource = 'nexus_locations'
