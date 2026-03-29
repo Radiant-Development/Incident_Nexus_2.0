@@ -56,16 +56,12 @@ end
 local function raycastFromCamera(distance)
     local camCoords = GetGameplayCamCoord()
     local camRot = GetGameplayCamRot(2)
+
     local direction = rotationToDirection(camRot)
     local destination = camCoords + (direction * distance)
 
     local ray = StartShapeTestRay(
-        camCoords.x, camCoords.y, camCoords.z,
-        destination.x, destination.y, destination.z,
-        -1,
-        PlayerPedId(),
-        0
-    )
+        camCoords.x, camCoords
 
     local _, hit, endCoords, _, entityHit = GetShapeTestResult(ray)
     return hit == 1, endCoords, entityHit
@@ -177,17 +173,19 @@ local function placeProp()
 
     local finalCoords = GetEntityCoords(obj)
 
-    local propData = {
-        label = prop.label,
-        model = prop.model,
-        type = prop.type,
-        category = prop.category,
-        coords = {
-            x = finalCoords.x,
-            y = finalCoords.y,
-            z = finalCoords.z
-        }
+   local propData = {
+    id = ('prop_%s'):format(#PropState.PlacedProps + 1),
+    label = prop.label,
+    model = prop.model,
+    type = prop.type,
+    category = prop.category,
+    mode = (prop.type == 'warning_light' or prop.type == 'station_light' or prop.type == 'status_light') and 'idle' or nil,
+    coords = {
+        x = finalCoords.x,
+        y = finalCoords.y,
+        z = finalCoords.z
     }
+}
 
     table.insert(PropState.PlacedProps, {
         entity = obj,
