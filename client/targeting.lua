@@ -1,7 +1,7 @@
 local BuilderActive = false
 local CachedStations = {}
 local CachedDrafts = {}
-print('[Incident Nexus] targeting.lua loaded')
+
 local BuilderState = {
     stationName = Config.DefaultStation.name,
     departmentIndex = 1,
@@ -20,10 +20,10 @@ local function notify(message)
     print(('[%s] %s'):format(Config.DisplayName, message))
 end
 
-local function drawText2D(x, y, text, scale)
+local function drawText2D(x, y, text, scale, r, g, b, a)
     SetTextFont(4)
     SetTextScale(scale or 0.35, scale or 0.35)
-    SetTextColour(255, 255, 255, 215)
+    SetTextColour(r or 255, g or 255, b or 255, a or 215)
     SetTextCentre(false)
     SetTextOutline()
     BeginTextCommandDisplayText('STRING')
@@ -44,6 +44,34 @@ local function drawText3D(x, y, z, text)
     ClearDrawOrigin()
 end
 
+local function isFirstPerson()
+    return GetFollowPedCamViewMode() == 4
+end
+
+local function disableBuilderControls()
+    DisablePlayerFiring(PlayerId(), true)
+
+    DisableControlAction(0, 24, true)   -- left click attack
+    DisableControlAction(0, 25, true)   -- right click aim
+    DisableControlAction(0, 37, true)   -- weapon wheel
+    DisableControlAction(0, 44, true)   -- cover
+    DisableControlAction(0, 45, true)   -- reload
+    DisableControlAction(0, 140, true)  -- melee light
+    DisableControlAction(0, 141, true)  -- melee heavy
+    DisableControlAction(0, 142, true)  -- melee alternate
+    DisableControlAction(0, 143, true)  -- melee block
+    DisableControlAction(0, 257, true)  -- attack 2
+    DisableControlAction(0, 263, true)  -- melee attack 1
+    DisableControlAction(0, 264, true)  -- melee attack 2
+end
+
+local function hideBuilderWeapons()
+    local ped = PlayerPedId()
+    SetCurrentPedWeapon(ped, `WEAPON_UNARMED`, true)
+    HideHudComponentThisFrame(19) -- weapon wheel
+    HideHudComponentThisFrame(20) -- weapon display
+end
+
 local function currentDepartment()
     return Config.Departments[BuilderState.departmentIndex] or 'fire'
 end
@@ -58,9 +86,10 @@ end
 
 local function setModeActivity()
     local mode = currentMode()
+    local allowBuilderInteraction = BuilderActive and isFirstPerson()
 
-    IncidentNexusProps:SetActive(mode == 'place_prop' or mode == 'hide_prop')
-    IncidentNexusDoors:SetActive(mode == 'select_door')
+    IncidentNexusProps:SetActive(allowBuilderInteraction and (mode == 'place_prop' or mode == 'hide_prop'))
+    IncidentNexusDoors:SetActive(allowBuilderInteraction and mode == 'select_door')
 end
 
 local function toggleBuilder()
@@ -174,6 +203,10 @@ local function drawBuilderMenu()
     drawText2D(0.02, 0.175, ('Station Type: %s'):format(currentStationType()), 0.34)
     drawText2D(0.02, 0.205, ('Mode: %s'):format(currentMode()), 0.34)
 
+    if not isFirstPerson() then
+        drawText2D(0.02, 0.02, 'You need to be in first person to use builder', 0.42, 255, 80, 80, 255)
+    end
+
     if currentMode() == 'place_prop' then
         drawText2D(0.02, 0.235, ('Selected Prop: %s'):format(IncidentNexusProps:GetCurrentLabel()), 0.34)
         drawText2D(0.02, 0.265, '[Mouse Wheel] Cycle Prop', 0.30)
@@ -194,6 +227,20 @@ local function drawBuilderMenu()
     drawText2D(0.02, 0.480, '[/incidentbuilder] Exit Builder', 0.30)
 end
 
+RegisterCommand('nexusamber', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationName, 'idle')
+    notify(('Warning lights set to amber for station %s'):format(BuilderState.stationName))
+end, false)
+
+RegisterCommand('nexusred', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationName, 'alert')
+    notify(('Warning lights set to red for station %s'):format(BuilderState.stationName))
+end, false)
+
+RegisterCommand('nexuslightsoff', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationName, 'off')
+    notify(('Warning lights turned off for station %s'):format(BuilderState.stationName))
+end, false)
 RegisterCommand(Config.Commands.Builder, function()
     toggleBuilder()
 end, false)
@@ -230,36 +277,43 @@ CreateThread(function()
 
             local ped = PlayerPedId()
             local coords = GetEntityCoords(ped)
+            local firstPerson = isFirstPerson()
+
+            hideBuilderWeapons()
+            disableBuilderControls()
+            setModeActivity()
 
             drawText3D(coords.x, coords.y, coords.z + 1.0, 'Incident Nexus Builder')
             drawBuilderMenu()
 
-            local mode = currentMode()
+            if firstPerson then
+                local mode = currentMode()
 
-            if mode == 'place_prop' or mode == 'hide_prop' then
-                IncidentNexusProps:Update()
-            elseif mode == 'select_door' then
-                IncidentNexusDoors:Update()
-            end
+                if mode == 'place_prop' or mode == 'hide_prop' then
+                    IncidentNexusProps:Update()
+                elseif mode == 'select_door' then
+                    IncidentNexusDoors:Update()
+                end
 
-            if IsControlJustReleased(0, Config.Keys.ExportDraft) then
-                createDraft()
-            end
+                if IsDisabledControlJustReleased(0, Config.Keys.ExportDraft) then
+                    createDraft()
+                end
 
-            if IsControlJustReleased(0, Config.Keys.Confirm) then
-                handleConfirm()
-            end
+                if IsDisabledControlJustReleased(0, Config.Keys.Confirm) then
+                    handleConfirm()
+                end
 
-            if IsControlJustReleased(0, Config.Keys.Cancel) then
-                handleCancel()
-            end
+                if IsDisabledControlJustReleased(0, Config.Keys.Cancel) then
+                    handleCancel()
+                end
 
-            if IsControlJustReleased(0, Config.Keys.ScrollUp) then
-                handleScroll(true)
-            end
+                if IsDisabledControlJustReleased(0, Config.Keys.ScrollUp) then
+                    handleScroll(true)
+                end
 
-            if IsControlJustReleased(0, Config.Keys.ScrollDown) then
-                handleScroll(false)
+                if IsDisabledControlJustReleased(0, Config.Keys.ScrollDown) then
+                    handleScroll(false)
+                end
             end
         end
 

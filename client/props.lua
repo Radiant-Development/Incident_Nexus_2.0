@@ -1,5 +1,5 @@
 IncidentNexusProps = IncidentNexusProps or {}
-print('[Incident Nexus] props.lua loaded')
+
 local PropState = {
     Active = false,
     CurrentIndex = 1,
@@ -56,12 +56,16 @@ end
 local function raycastFromCamera(distance)
     local camCoords = GetGameplayCamCoord()
     local camRot = GetGameplayCamRot(2)
-
     local direction = rotationToDirection(camRot)
     local destination = camCoords + (direction * distance)
 
     local ray = StartShapeTestRay(
-        camCoords.x, camCoords
+        camCoords.x, camCoords.y, camCoords.z,
+        destination.x, destination.y, destination.z,
+        -1,
+        PlayerPedId(),
+        0
+    )
 
     local _, hit, endCoords, _, entityHit = GetShapeTestResult(ray)
     return hit == 1, endCoords, entityHit
@@ -119,8 +123,6 @@ local function updatePreview()
         false,
         false
     )
-
-    PlaceObjectOnGroundProperly(PropState.PreviewEntity)
 end
 
 local function drawPlacement()
@@ -141,14 +143,13 @@ local function drawPlacement()
         target.x, target.y, target.z - 1.0,
         0.0, 0.0, 0.0,
         0.0, 0.0, 0.0,
-        0.45, 0.45, 0.15,
+        0.35, 0.35, 0.15,
         0, 150, 255, 125,
-        false, false, 2
+        false, false, 2, false, nil, nil, false
     )
 end
 
-local function placeProp()
-
+local function placeProp(stationName)
     local prop = getCurrentProp()
     if not prop then return end
 
@@ -168,29 +169,33 @@ local function placeProp()
         false
     )
 
-    PlaceObjectOnGroundProperly(obj)
     FreezeEntityPosition(obj, true)
 
     local finalCoords = GetEntityCoords(obj)
 
-   local propData = {
-    id = ('prop_%s'):format(#PropState.PlacedProps + 1),
-    label = prop.label,
-    model = prop.model,
-    type = prop.type,
-    category = prop.category,
-    mode = (prop.type == 'warning_light' or prop.type == 'station_light' or prop.type == 'status_light') and 'idle' or nil,
-    coords = {
-        x = finalCoords.x,
-        y = finalCoords.y,
-        z = finalCoords.z
+    local propData = {
+        id = ('prop_%s'):format(#PropState.PlacedProps + 1),
+        stationId = stationName or 'unknown_station',
+        label = prop.label,
+        model = prop.model,
+        type = prop.type,
+        category = prop.category,
+        mode = (prop.type == 'warning_light' or prop.type == 'station_light' or prop.type == 'status_light') and 'idle' or nil,
+        coords = {
+            x = finalCoords.x,
+            y = finalCoords.y,
+            z = finalCoords.z
+        }
     }
-}
 
     table.insert(PropState.PlacedProps, {
         entity = obj,
         data = propData
     })
+
+    if propData.type == 'warning_light' or propData.type == 'station_light' or propData.type == 'status_light' then
+        IncidentNexusWarningLights:RegisterLight(propData.id, propData.stationId, obj, propData.mode or 'idle')
+    end
 
     debugPrint(('Placed %s'):format(prop.label))
 end
@@ -203,11 +208,14 @@ local function removeLast()
         DeleteEntity(last.entity)
     end
 
+    if last.data and last.data.id then
+        IncidentNexusWarningLights:RemoveLight(last.data.id)
+    end
+
     table.remove(PropState.PlacedProps, #PropState.PlacedProps)
 end
 
 local function hideProp()
-
     local hit, coords, entity = raycastFromCamera(Config.SelectionDistance)
     if not hit or not entity then return end
 
@@ -219,7 +227,11 @@ local function hideProp()
 
     table.insert(PropState.HiddenProps, {
         model = model,
-        coords = entityCoords
+        coords = {
+            x = entityCoords.x,
+            y = entityCoords.y,
+            z = entityCoords.z
+        }
     })
 end
 
@@ -239,7 +251,6 @@ function IncidentNexusProps:Update()
 end
 
 function IncidentNexusProps:Cycle(forward)
-
     if forward then
         PropState.CurrentIndex = PropState.CurrentIndex + 1
         if PropState.CurrentIndex > #Config.PropModels then
@@ -255,8 +266,8 @@ function IncidentNexusProps:Cycle(forward)
     createPreview()
 end
 
-function IncidentNexusProps:Confirm()
-    placeProp()
+function IncidentNexusProps:Confirm(stationName)
+    placeProp(stationName)
 end
 
 function IncidentNexusProps:Cancel()
@@ -270,7 +281,7 @@ end
 function IncidentNexusProps:GetPlacedPropsForExport()
     local export = {}
 
-    for i=1, #PropState.PlacedProps do
+    for i = 1, #PropState.PlacedProps do
         table.insert(export, PropState.PlacedProps[i].data)
     end
 
