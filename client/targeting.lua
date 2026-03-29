@@ -1,536 +1,401 @@
-IncidentNexusProps = IncidentNexusProps or {}
+local BuilderActive = false
+local CachedStations = {}
+local CachedDrafts = {}
 
-local PropState = {
-    Active = false,
-    CurrentIndex = 1,
-    PreviewEntity = nil,
-    PreviewCoords = nil,
-    PreviewHeading = 0.0,
-    PreviewNormal = nil,
-    PlacedProps = {},
-    HiddenProps = {},
-    LoadedProps = {}
+local BuilderState = {
+    stationName = Config.DefaultStation.name,
+    stationId = 'new_station',
+    departmentIndex = 1,
+    stationTypeIndex = 1,
+    modeIndex = 1,
+    DoorEditField = 'name'
 }
 
 local function debugPrint(message)
     if Config.Debug then
-        print(('[%s Props] %s'):format(Config.DisplayName, message))
+        print(('[%s] %s'):format(Config.DisplayName, message))
     end
 end
 
-local function getCurrentProp()
-    return Config.PropModels[PropState.CurrentIndex]
+local function notify(message)
+    print(('[%s] %s'):format(Config.DisplayName, message))
 end
 
-local function isLightType(propType)
-    return propType == 'warning_light'
-        or propType == 'station_light'
-        or propType == 'status_light'
-        or propType == 'traffic_light'
-end
+local function sanitizeName(name)
+    local safe = tostring(name or 'station')
+    safe = safe:lower()
+    safe = safe:gsub('[^%w%s_-]', '')
+    safe = safe:gsub('%s+', '_')
+    safe = safe:gsub('_+', '_')
+    safe = safe:gsub('^_+', '')
+    safe = safe:gsub('_+$', '')
 
-local function loadModel(model)
-    local modelHash = joaat(model)
-
-    if not IsModelInCdimage(modelHash) then
-        debugPrint(('Invalid model: %s'):format(model))
-        return nil
+    if safe == '' then
+        safe = 'station'
     end
 
-    RequestModel(modelHash)
+    return safe
+end
 
-    local timeout = GetGameTimer() + 5000
-    while not HasModelLoaded(modelHash) do
-        Wait(0)
-        if GetGameTimer() > timeout then
-            debugPrint(('Model load timed out: %s'):format(model))
-            return nil
+local function setStationName(name)
+    if not name or name == '' then
+        notify('Usage: /' .. Config.Commands.SetStationName .. ' [station name]')
+        return
+    end
+
+    BuilderState.stationName = name
+    BuilderState.stationId = sanitizeName(name)
+
+    notify(('Builder station set to %s (%s)'):format(BuilderState.stationName, BuilderState.stationId))
+end
+
+local function drawText2D(x, y, text, scale, r, g, b, a)
+    SetTextFont(4)
+    SetTextScale(scale or 0.35, scale or 0.35)
+    SetTextColour(r or 255, g or 255, b or 255, a or 215)
+    SetTextCentre(false)
+    SetTextOutline()
+    BeginTextCommandDisplayText('STRING')
+    AddTextComponentSubstringPlayerName(text)
+    EndTextCommandDisplayText(x, y)
+end
+
+local function drawText3D(x, y, z, text)
+    SetDrawOrigin(x, y, z, 0)
+    SetTextScale(0.35, 0.35)
+    SetTextFont(4)
+    SetTextProportional(1)
+    SetTextColour(255, 255, 255, 215)
+    SetTextEntry('STRING')
+    SetTextCentre(true)
+    AddTextComponentString(text)
+    DrawText(0.0, 0.0)
+    ClearDrawOrigin()
+end
+
+local function isFirstPerson()
+    return GetFollowPedCamViewMode() == 4
+end
+
+local function disableBuilderControls()
+    DisablePlayerFiring(PlayerId(), true)
+
+    DisableControlAction(0, 24, true)
+    DisableControlAction(0, 25, true)
+    DisableControlAction(0, 37, true)
+    DisableControlAction(0, 44, true)
+    DisableControlAction(0, 45, true)
+    DisableControlAction(0, 140, true)
+    DisableControlAction(0, 141, true)
+    DisableControlAction(0, 142, true)
+    DisableControlAction(0, 143, true)
+    DisableControlAction(0, 257, true)
+    DisableControlAction(0, 263, true)
+    DisableControlAction(0, 264, true)
+end
+
+local function hideBuilderWeapons()
+    local ped = PlayerPedId()
+    SetCurrentPedWeapon(ped, `WEAPON_UNARMED`, true)
+    HideHudComponentThisFrame(19)
+    HideHudComponentThisFrame(20)
+end
+
+local function currentDepartment()
+    return Config.Departments[BuilderState.departmentIndex] or 'fire'
+end
+
+local function currentStationType()
+    return Config.StationTypes[BuilderState.stationTypeIndex] or 'fire_station'
+end
+
+local function currentMode()
+    return Config.BuilderModes[BuilderState.modeIndex] or 'place_prop'
+end
+
+local function setModeActivity()
+    local mode = currentMode()
+    local allowBuilderInteraction = BuilderActive and isFirstPerson()
+
+    IncidentNexusProps:SetActive(allowBuilderInteraction and (mode == 'place_prop' or mode == 'hide_prop'))
+    IncidentNexusDoors:SetActive(allowBuilderInteraction and mode == 'select_door')
+end
+
+local function toggleBuilder()
+    BuilderActive = not BuilderActive
+
+    if BuilderActive then
+        notify('Builder enabled.')
+        TriggerServerEvent('incident-nexus:server:requestStations')
+        TriggerServerEvent('incident-nexus:server:requestDrafts')
+    else
+        notify('Builder disabled.')
+        IncidentNexusProps:HideBuilderPlacedProps()
+    end
+
+    setModeActivity()
+
+    if not BuilderActive then
+        IncidentNexusProps:SetActive(false)
+        IncidentNexusDoors:SetActive(false)
+    end
+end
+
+local function cycleBuilderMode(forward)
+    if forward then
+        BuilderState.modeIndex = BuilderState.modeIndex + 1
+        if BuilderState.modeIndex > #Config.BuilderModes then
+            BuilderState.modeIndex = 1
+        end
+    else
+        BuilderState.modeIndex = BuilderState.modeIndex - 1
+        if BuilderState.modeIndex < 1 then
+            BuilderState.modeIndex = #Config.BuilderModes
         end
     end
 
-    return modelHash
+    setModeActivity()
 end
 
-local function rotationToDirection(rot)
-    local rotZ = math.rad(rot.z)
-    local rotX = math.rad(rot.x)
-    local cosX = math.abs(math.cos(rotX))
-
-    return vector3(
-        -math.sin(rotZ) * cosX,
-        math.cos(rotZ) * cosX,
-        math.sin(rotX)
-    )
-end
-
-local function raycastFromCamera(distance)
-    local camCoords = GetGameplayCamCoord()
-    local camRot = GetGameplayCamRot(2)
-    local direction = rotationToDirection(camRot)
-    local destination = camCoords + (direction * distance)
-
-    local ray = StartShapeTestRay(
-        camCoords.x, camCoords.y, camCoords.z,
-        destination.x, destination.y, destination.z,
-        -1,
-        PlayerPedId(),
-        0
-    )
-
-    local _, hit, endCoords, surfaceNormal, entityHit = GetShapeTestResultIncludingMaterial(ray)
-    return hit == 1, endCoords, surfaceNormal, entityHit
-end
-
-local function deletePreview()
-    if PropState.PreviewEntity and DoesEntityExist(PropState.PreviewEntity) then
-        DeleteEntity(PropState.PreviewEntity)
-    end
-
-    PropState.PreviewEntity = nil
-    PropState.PreviewCoords = nil
-    PropState.PreviewNormal = nil
-end
-
-local function normalToRotation(normal, heading)
-    if not normal then
-        return 0.0, 0.0, heading or 0.0
-    end
-
-    local pitch = math.deg(math.atan2(normal.y, normal.z))
-    local roll = -math.deg(math.atan2(normal.x, normal.z))
-    local yaw = heading or 0.0
-
-    if math.abs(normal.z) < 0.5 then
-        pitch = 0.0
-        roll = 0.0
-        yaw = (heading or 0.0)
-    end
-
-    return pitch, roll, yaw
-end
-
-local function applyEntitySurfaceTransform(entity, coords, normal)
-    if not entity or not DoesEntityExist(entity) or not coords then
-        return
-    end
-
-    normal = normal or vector3(0.0, 0.0, 1.0)
-
-    local offset = 0.01
-
-    local placeX = coords.x + (normal.x * offset)
-    local placeY = coords.y + (normal.y * offset)
-    local placeZ = coords.z + (normal.z * offset)
-
-    SetEntityCoordsNoOffset(entity, placeX, placeY, placeZ, false, false, false)
-
-    local pitch, roll, yaw = normalToRotation(normal, PropState.PreviewHeading)
-    SetEntityRotation(entity, pitch, roll, yaw, 2, true)
-
-    FreezeEntityPosition(entity, true)
-    SetEntityCollision(entity, true, true)
-    SetEntityDynamic(entity, false)
-    SetEntityHasGravity(entity, false)
-end
-
-local function setupPreviewEntity(entity)
-    SetEntityAlpha(entity, 180, false)
-    SetEntityCollision(entity, false, false)
-    SetEntityDynamic(entity, false)
-    SetEntityHasGravity(entity, false)
-    FreezeEntityPosition(entity, true)
-end
-
-local function createPreview()
-    deletePreview()
-
-    local prop = getCurrentProp()
-    if not prop then
-        return
-    end
-
-    local modelHash = loadModel(prop.model)
-    if not modelHash then
-        return
-    end
-
-    local hit, coords, normal = raycastFromCamera(Config.SelectionDistance)
-    if not hit or not coords then
-        SetModelAsNoLongerNeeded(modelHash)
-        return
-    end
-
-    local obj = CreateObjectNoOffset(modelHash, coords.x, coords.y, coords.z, false, false, false)
-    setupPreviewEntity(obj)
-
-    PropState.PreviewEntity = obj
-    PropState.PreviewCoords = coords
-    PropState.PreviewNormal = normal
-
-    applyEntitySurfaceTransform(obj, coords, normal)
-    SetEntityCollision(obj, false, false)
-
-    SetModelAsNoLongerNeeded(modelHash)
-end
-
-local function updatePreview()
-    if not PropState.Active then
-        return
-    end
-
-    local hit, coords, normal = raycastFromCamera(Config.SelectionDistance)
-    if not hit or not coords then
-        return
-    end
-
-    PropState.PreviewCoords = coords
-    PropState.PreviewNormal = normal
-
-    if not PropState.PreviewEntity or not DoesEntityExist(PropState.PreviewEntity) then
-        createPreview()
-        return
-    end
-
-    applyEntitySurfaceTransform(PropState.PreviewEntity, coords, normal)
-    SetEntityCollision(PropState.PreviewEntity, false, false)
-    SetEntityAlpha(PropState.PreviewEntity, 180, false)
-end
-
-local function drawFacingLine()
-    if not PropState.PreviewEntity or not DoesEntityExist(PropState.PreviewEntity) then
-        return
-    end
-
-    local coords = GetEntityCoords(PropState.PreviewEntity)
-    local forward = GetEntityForwardVector(PropState.PreviewEntity)
-
-    local endX = coords.x + (forward.x * 1.0)
-    local endY = coords.y + (forward.y * 1.0)
-    local endZ = coords.z + (forward.z * 1.0)
-
-    DrawLine(
-        coords.x, coords.y, coords.z,
-        endX, endY, endZ,
-        0, 255, 100, 255
-    )
-end
-
-local function drawPlacement()
-    if not PropState.PreviewCoords then
-        return
-    end
-
+local function createDraft()
     local ped = PlayerPedId()
-    local pedCoords = GetEntityCoords(ped)
-    local target = PropState.PreviewCoords
+    local coords = GetEntityCoords(ped)
+    local heading = GetEntityHeading(ped)
 
-    DrawLine(
-        pedCoords.x, pedCoords.y, pedCoords.z,
-        target.x, target.y, target.z,
-        0, 150, 255, 255
-    )
-
-    DrawMarker(
-        1,
-        target.x, target.y, target.z,
-        0.0, 0.0, 0.0,
-        0.0, 0.0, 0.0,
-        0.20, 0.20, 0.20,
-        0, 150, 255, 125,
-        false, false, 2, false, nil, nil, false
-    )
-
-    drawFacingLine()
-end
-
-local function spawnSavedProp(propData, storeLoaded)
-    if not propData or not propData.model or not propData.coords then
-        return nil
-    end
-
-    local modelHash = loadModel(propData.model)
-    if not modelHash then
-        return nil
-    end
-
-    local obj = CreateObjectNoOffset(
-        modelHash,
-        propData.coords.x,
-        propData.coords.y,
-        propData.coords.z,
-        true,
-        true,
-        false
-    )
-
-    SetEntityDynamic(obj, false)
-    SetEntityHasGravity(obj, false)
-    FreezeEntityPosition(obj, true)
-
-    if propData.rotation then
-        SetEntityRotation(
-            obj,
-            propData.rotation.x or 0.0,
-            propData.rotation.y or 0.0,
-            propData.rotation.z or 0.0,
-            2,
-            true
-        )
-    end
-
-    SetEntityCoordsNoOffset(
-        obj,
-        propData.coords.x,
-        propData.coords.y,
-        propData.coords.z,
-        false,
-        false,
-        false
-    )
-
-    if storeLoaded then
-        table.insert(PropState.LoadedProps, {
-            entity = obj,
-            data = propData
-        })
-    end
-
-    if isLightType(propData.type) then
-        IncidentNexusWarningLights:RegisterLight(
-            propData.id or ('loaded_%s'):format(#PropState.LoadedProps + 1),
-            propData.stationId or 'unknown_station',
-            obj,
-            propData.mode or 'idle',
-            propData.type
-        )
-    end
-
-    return obj
-end
-
-local function placeProp(stationId)
-    local prop = getCurrentProp()
-    if not prop then
-        return
-    end
-
-    local coords = PropState.PreviewCoords
-    local normal = PropState.PreviewNormal
-
-    if not coords then
-        return
-    end
-
-    local modelHash = loadModel(prop.model)
-    if not modelHash then
-        return
-    end
-
-    local obj = CreateObjectNoOffset(modelHash, coords.x, coords.y, coords.z, true, true, false)
-    SetEntityDynamic(obj, false)
-    SetEntityHasGravity(obj, false)
-    FreezeEntityPosition(obj, true)
-
-    applyEntitySurfaceTransform(obj, coords, normal)
-
-    local finalCoords = GetEntityCoords(obj)
-    local rot = GetEntityRotation(obj, 2)
-
-    local propData = {
-        id = ('prop_%s'):format(#PropState.PlacedProps + 1),
-        stationId = stationId or 'unknown_station',
-        label = prop.label,
-        model = prop.model,
-        type = prop.type,
-        category = prop.category,
-        mode = isLightType(prop.type) and 'idle' or nil,
+    local stationData = {
+        id = BuilderState.stationId,
+        fileName = BuilderState.stationId,
+        name = BuilderState.stationName,
+        department = currentDepartment(),
+        stationType = currentStationType(),
         coords = {
-            x = finalCoords.x,
-            y = finalCoords.y,
-            z = finalCoords.z
+            x = coords.x,
+            y = coords.y,
+            z = coords.z
         },
-        rotation = {
-            x = rot.x,
-            y = rot.y,
-            z = rot.z
-        }
+        heading = heading,
+        props = IncidentNexusProps:GetPlacedPropsForExport(),
+        hiddenProps = IncidentNexusProps:GetHiddenPropsForExport(),
+        doors = IncidentNexusDoors:GetDoorsForExport(),
+        traffic = {},
+        screens = {},
+        computers = {},
+        warningLights = {}
     }
 
-    table.insert(PropState.PlacedProps, {
-        entity = obj,
-        data = propData
-    })
-
-    if isLightType(propData.type) then
-        IncidentNexusWarningLights:RegisterLight(
-            propData.id,
-            propData.stationId,
-            obj,
-            propData.mode or 'idle',
-            propData.type
-        )
-    end
-
-    debugPrint(('Placed %s for station %s'):format(prop.label, propData.stationId))
+    TriggerServerEvent('incident-nexus:server:createStationDraft', stationData)
 end
 
-local function removeLast()
-    local last = PropState.PlacedProps[#PropState.PlacedProps]
-    if not last then
-        return
-    end
+local function handleConfirm()
+    local mode = currentMode()
 
-    if last.entity and DoesEntityExist(last.entity) then
-        DeleteEntity(last.entity)
+    if mode == 'place_prop' then
+        IncidentNexusProps:Confirm(BuilderState.stationId)
+    elseif mode == 'hide_prop' then
+        IncidentNexusProps:Hide()
+    elseif mode == 'select_door' then
+        IncidentNexusDoors:ConfirmSelect()
     end
-
-    if last.data and last.data.id then
-        IncidentNexusWarningLights:RemoveLight(last.data.id)
-    end
-
-    table.remove(PropState.PlacedProps, #PropState.PlacedProps)
-    debugPrint('Removed last placed prop.')
 end
 
-local function hideProp()
-    local hit, _, _, entity = raycastFromCamera(Config.SelectionDistance)
-    if not hit or not entity or entity == 0 then
-        return
+local function handleCancel()
+    local mode = currentMode()
+
+    if mode == 'place_prop' then
+        IncidentNexusProps:Cancel()
+    elseif mode == 'hide_prop' then
+        IncidentNexusProps:Cancel()
+    elseif mode == 'select_door' then
+        IncidentNexusDoors:RemoveLastSelected()
     end
-
-    if not DoesEntityExist(entity) then
-        return
-    end
-
-    local entityCoords = GetEntityCoords(entity)
-    local model = GetEntityModel(entity)
-
-    SetEntityAsMissionEntity(entity, true, true)
-    DeleteEntity(entity)
-
-    table.insert(PropState.HiddenProps, {
-        model = model,
-        coords = {
-            x = entityCoords.x,
-            y = entityCoords.y,
-            z = entityCoords.z
-        }
-    })
-
-    debugPrint('Hidden targeted prop.')
 end
 
-function IncidentNexusProps:SetActive(state)
-    PropState.Active = state
+local function handleScroll(forward)
+    local mode = currentMode()
 
-    if state then
-        createPreview()
+    if mode == 'place_prop' then
+        IncidentNexusProps:Cycle(forward)
+    elseif mode == 'hide_prop' then
+        cycleBuilderMode(forward)
+    elseif mode == 'select_door' then
+        if BuilderState.DoorEditField == 'name' then
+            IncidentNexusDoors:CycleDoorName(forward)
+        else
+            IncidentNexusDoors:CycleApparatus(forward)
+        end
+    end
+end
+
+local function drawBuilderMenu()
+    drawText2D(0.02, 0.08, 'Incident Nexus Builder', 0.45)
+    drawText2D(0.02, 0.115, ('Station Name: %s'):format(BuilderState.stationName), 0.34)
+    drawText2D(0.02, 0.145, ('Station ID: %s'):format(BuilderState.stationId), 0.34)
+    drawText2D(0.02, 0.175, ('Department: %s'):format(currentDepartment()), 0.34)
+    drawText2D(0.02, 0.205, ('Station Type: %s'):format(currentStationType()), 0.34)
+    drawText2D(0.02, 0.235, ('Mode: %s'):format(currentMode()), 0.34)
+
+    if not isFirstPerson() then
+        drawText2D(0.02, 0.02, 'You need to be in first person to use builder', 0.42, 255, 80, 80, 255)
+    end
+
+    if currentMode() == 'place_prop' then
+        drawText2D(0.02, 0.265, ('Selected Prop: %s'):format(IncidentNexusProps:GetCurrentLabel()), 0.34)
+        drawText2D(0.02, 0.295, ('Preview Heading: %.1f'):format(IncidentNexusProps and 0.0 or 0.0), 0.30)
+        drawText2D(0.02, 0.320, '[Mouse Wheel] Cycle Prop', 0.30)
+        drawText2D(0.02, 0.345, '[Left/Right Arrow] Rotate Prop', 0.30)
+    elseif currentMode() == 'select_door' then
+        drawText2D(0.02, 0.265, ('Selected Doors: %s'):format(IncidentNexusDoors:GetSelectedDoorCount()), 0.34)
+        drawText2D(0.02, 0.295, ('Door Name: %s'):format(IncidentNexusDoors:GetCurrentDoorName()), 0.30)
+        drawText2D(0.02, 0.320, ('Apparatus: %s'):format(IncidentNexusDoors:GetCurrentApparatus()), 0.30)
+        drawText2D(0.02, 0.345, ('Editing: %s'):format(BuilderState.DoorEditField), 0.30)
+        drawText2D(0.02, 0.370, '[Mouse Wheel] Cycle Name/Apparatus', 0.30)
+        drawText2D(0.02, 0.395, '[/backin] toggles editor field', 0.30)
     else
-        deletePreview()
-    end
-end
-
-function IncidentNexusProps:Rotate(forward)
-    if forward then
-        PropState.PreviewHeading = PropState.PreviewHeading + 5.0
-    else
-        PropState.PreviewHeading = PropState.PreviewHeading - 5.0
+        drawText2D(0.02, 0.295, '[Mouse Wheel] Cycle Builder Mode', 0.30)
     end
 
-    if PropState.PreviewHeading >= 360.0 then
-        PropState.PreviewHeading = 0.0
-    elseif PropState.PreviewHeading < 0.0 then
-        PropState.PreviewHeading = 355.0
-    end
+    drawText2D(0.02, 0.435, '[Left Click] Confirm / Place / Select', 0.30)
+    drawText2D(0.02, 0.460, '[Right Click] Remove / Undo', 0.30)
+    drawText2D(0.02, 0.485, '[E] Export Draft', 0.30)
+    drawText2D(0.02, 0.510, ('[/%s] Set Station Name'):format(Config.Commands.SetStationName), 0.30)
+    drawText2D(0.02, 0.535, '[/incidentbuilder] Exit Builder', 0.30)
 end
 
-function IncidentNexusProps:Update()
-    updatePreview()
-    drawPlacement()
-end
+RegisterCommand(Config.Commands.Builder, function()
+    toggleBuilder()
+end, false)
 
-function IncidentNexusProps:Cycle(forward)
-    if forward then
-        PropState.CurrentIndex = PropState.CurrentIndex + 1
-        if PropState.CurrentIndex > #Config.PropModels then
-            PropState.CurrentIndex = 1
-        end
-    else
-        PropState.CurrentIndex = PropState.CurrentIndex - 1
-        if PropState.CurrentIndex < 1 then
-            PropState.CurrentIndex = #Config.PropModels
-        end
-    end
+RegisterCommand(Config.Commands.SetStationName, function(_, args)
+    local name = table.concat(args or {}, ' ')
+    setStationName(name)
+end, false)
 
-    createPreview()
-end
+RegisterCommand(Config.Commands.TestAlert, function()
+    TriggerServerEvent('incident-nexus:server:testAlert', 'test_station')
+end, false)
 
-function IncidentNexusProps:Confirm(stationId)
-    placeProp(stationId)
-end
+RegisterCommand(Config.Commands.BayOpen, function()
+    notify('Bay open command triggered.')
+end, false)
 
-function IncidentNexusProps:Cancel()
-    removeLast()
-end
-
-function IncidentNexusProps:Hide()
-    hideProp()
-end
-
-function IncidentNexusProps:HideBuilderPlacedProps()
-    for i = 1, #PropState.PlacedProps do
-        local entry = PropState.PlacedProps[i]
-        if entry.entity and DoesEntityExist(entry.entity) then
-            DeleteEntity(entry.entity)
-            entry.entity = nil
-        end
-    end
-
-    IncidentNexusWarningLights:ClearAll()
-end
-
-function IncidentNexusProps:LoadStations(stations)
-    for i = 1, #PropState.LoadedProps do
-        local entry = PropState.LoadedProps[i]
-        if entry.entity and DoesEntityExist(entry.entity) then
-            DeleteEntity(entry.entity)
-        end
-    end
-
-    PropState.LoadedProps = {}
-    IncidentNexusWarningLights:ClearAll()
-
-    if type(stations) ~= 'table' then
+RegisterCommand(Config.Commands.BackIn, function()
+    if currentMode() ~= 'select_door' then
+        notify('Back-in command triggered.')
         return
     end
 
-    for i = 1, #stations do
-        local station = stations[i]
-        if station and type(station.props) == 'table' then
-            for p = 1, #station.props do
-                spawnSavedProp(station.props[p], true)
+    if BuilderState.DoorEditField == 'name' then
+        BuilderState.DoorEditField = 'apparatus'
+    else
+        BuilderState.DoorEditField = 'name'
+    end
+
+    notify(('Door edit field: %s'):format(BuilderState.DoorEditField))
+end, false)
+
+RegisterCommand('nexusamber', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'idle')
+    notify(('Warning lights set to amber for station %s'):format(BuilderState.stationId))
+end, false)
+
+RegisterCommand('nexusred', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'alert')
+    notify(('Warning lights set to red for station %s'):format(BuilderState.stationId))
+end, false)
+
+RegisterCommand('nexuslightsoff', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'off')
+    notify(('Warning lights turned off for station %s'):format(BuilderState.stationId))
+end, false)
+
+CreateThread(function()
+    Wait(1500)
+    TriggerServerEvent('incident-nexus:server:requestStations')
+end)
+
+CreateThread(function()
+    while true do
+        local sleep = 1000
+
+        if BuilderActive then
+            sleep = 0
+
+            local ped = PlayerPedId()
+            local coords = GetEntityCoords(ped)
+            local firstPerson = isFirstPerson()
+
+            hideBuilderWeapons()
+            disableBuilderControls()
+            setModeActivity()
+
+            drawText3D(coords.x, coords.y, coords.z + 1.0, 'Incident Nexus Builder')
+            drawBuilderMenu()
+
+            if firstPerson then
+                local mode = currentMode()
+
+                if mode == 'place_prop' or mode == 'hide_prop' then
+                    IncidentNexusProps:Update()
+                elseif mode == 'select_door' then
+                    IncidentNexusDoors:Update()
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.ExportDraft) then
+                    createDraft()
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.Confirm) then
+                    handleConfirm()
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.Cancel) then
+                    handleCancel()
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.ScrollUp) then
+                    handleScroll(true)
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.ScrollDown) then
+                    handleScroll(false)
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.RotateLeft) and currentMode() == 'place_prop' then
+                    IncidentNexusProps:Rotate(false)
+                end
+
+                if IsDisabledControlJustReleased(0, Config.Keys.RotateRight) and currentMode() == 'place_prop' then
+                    IncidentNexusProps:Rotate(true)
+                end
             end
         end
+
+        Wait(sleep)
     end
+end)
 
-    debugPrint(('Loaded %s stations into world.'):format(#stations))
-end
+RegisterNetEvent('incident-nexus:client:receiveStations', function(stations)
+    CachedStations = stations or {}
+    debugPrint(('Received %s stations.'):format(#CachedStations))
+    IncidentNexusProps:LoadStations(CachedStations)
+end)
 
-function IncidentNexusProps:GetPlacedPropsForExport()
-    local export = {}
+RegisterNetEvent('incident-nexus:client:receiveDrafts', function(drafts)
+    CachedDrafts = drafts or {}
+    debugPrint(('Received %s drafts.'):format(#CachedDrafts))
+end)
 
-    for i = 1, #PropState.PlacedProps do
-        table.insert(export, PropState.PlacedProps[i].data)
-    end
+RegisterNetEvent('incident-nexus:client:testAlert', function(stationId)
+    notify(('Test alert triggered for station: %s'):format(tostring(stationId)))
+    IncidentNexusWarningLights:SetStationMode(stationId, 'alert')
 
-    return export
-end
+    SendNUIMessage({
+        action = 'showDispatch',
+        title = 'Dispatch Alert',
+        message = ('Tone-out triggered for %s'):format(tostring(stationId))
+    })
+end)
 
-function IncidentNexusProps:GetHiddenPropsForExport()
-    return PropState.HiddenProps
-end
-
-function IncidentNexusProps:GetCurrentLabel()
-    local prop = getCurrentProp()
-    return prop and prop.label or 'None'
-end
+RegisterNetEvent('incident-nexus:client:notify', function(message)
+    notify(message)
+end)
