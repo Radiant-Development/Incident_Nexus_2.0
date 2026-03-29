@@ -9,7 +9,7 @@ Config.Commands = {
     Builder = 'incidentbuilder',
     TestAlert = 'nexustest',
     BayOpen = 'bayopen',
-    BackIn = 'backin'
+    BackIn = 'backin',
     SetStationName = 'nexussetname'
 }
 
