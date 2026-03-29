@@ -84,16 +84,22 @@ local function deletePreview()
 end
 
 local function normalToRotation(normal, heading)
-    heading = heading or 0.0
-
     if not normal then
-        return 0.0, 0.0, heading
+        return 0.0, 0.0, heading or 0.0
     end
 
-    local pitch = math.deg(math.atan2(normal.x, normal.z))
-    local roll = -math.deg(math.atan2(normal.y, normal.z))
+    local pitch = math.deg(math.atan2(normal.y, normal.z))
+    local roll = -math.deg(math.atan2(normal.x, normal.z))
+    local yaw = heading or 0.0
 
-    return pitch, roll, heading
+    -- For walls, face the prop outward based on camera direction
+    if math.abs(normal.z) < 0.5 then
+        pitch = 0.0
+        roll = 0.0
+        yaw = GetGameplayCamRot(2).z + 180.0
+    end
+
+    return pitch, roll, yaw
 end
 
 local function applyEntitySurfaceTransform(entity, coords, normal)
@@ -101,15 +107,13 @@ local function applyEntitySurfaceTransform(entity, coords, normal)
         return
     end
 
-    local nx = normal and normal.x or 0.0
-    local ny = normal and normal.y or 0.0
-    local nz = normal and normal.z or 1.0
+    normal = normal or vector3(0.0, 0.0, 1.0)
 
-    local offset = 0.02
+    local offset = 0.01
 
-    local placeX = coords.x + (nx * offset)
-    local placeY = coords.y + (ny * offset)
-    local placeZ = coords.z + (nz * offset)
+    local placeX = coords.x + (normal.x * offset)
+    local placeY = coords.y + (normal.y * offset)
+    local placeZ = coords.z + (normal.z * offset)
 
     SetEntityCoordsNoOffset(entity, placeX, placeY, placeZ, false, false, false)
 
@@ -230,7 +234,6 @@ local function placeProp(stationId)
     end
 
     local obj = CreateObjectNoOffset(modelHash, coords.x, coords.y, coords.z, true, true, false)
-
     SetEntityDynamic(obj, false)
     SetEntityHasGravity(obj, false)
     FreezeEntityPosition(obj, true)
