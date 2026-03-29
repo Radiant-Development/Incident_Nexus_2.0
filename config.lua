@@ -18,7 +18,9 @@ Config.Keys = {
     Cancel = 25,       -- Right Click
     ScrollUp = 15,     -- Mouse Wheel Up
     ScrollDown = 14,   -- Mouse Wheel Down
-    ExportDraft = 38   -- E
+    ExportDraft = 38,  -- E
+    RotateLeft = 174,  -- Left Arrow
+    RotateRight = 175  -- Right Arrow
 }
 
 Config.DrawDistance = 25.0

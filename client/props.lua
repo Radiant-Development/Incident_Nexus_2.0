@@ -8,7 +8,8 @@ local PropState = {
     PreviewHeading = 0.0,
     PreviewNormal = nil,
     PlacedProps = {},
-    HiddenProps = {}
+    HiddenProps = {},
+    LoadedProps = {}
 }
 
 local function debugPrint(message)
@@ -19,6 +20,13 @@ end
 
 local function getCurrentProp()
     return Config.PropModels[PropState.CurrentIndex]
+end
+
+local function isLightType(propType)
+    return propType == 'warning_light'
+        or propType == 'station_light'
+        or propType == 'status_light'
+        or propType == 'traffic_light'
 end
 
 local function loadModel(model)
@@ -92,11 +100,10 @@ local function normalToRotation(normal, heading)
     local roll = -math.deg(math.atan2(normal.x, normal.z))
     local yaw = heading or 0.0
 
-    -- For walls, face the prop outward based on camera direction
     if math.abs(normal.z) < 0.5 then
         pitch = 0.0
         roll = 0.0
-        yaw = GetGameplayCamRot(2).z + 180.0
+        yaw = (heading or 0.0)
     end
 
     return pitch, roll, yaw
@@ -189,6 +196,25 @@ local function updatePreview()
     SetEntityAlpha(PropState.PreviewEntity, 180, false)
 end
 
+local function drawFacingLine()
+    if not PropState.PreviewEntity or not DoesEntityExist(PropState.PreviewEntity) then
+        return
+    end
+
+    local coords = GetEntityCoords(PropState.PreviewEntity)
+    local forward = GetEntityForwardVector(PropState.PreviewEntity)
+
+    local endX = coords.x + (forward.x * 1.0)
+    local endY = coords.y + (forward.y * 1.0)
+    local endZ = coords.z + (forward.z * 1.0)
+
+    DrawLine(
+        coords.x, coords.y, coords.z,
+        endX, endY, endZ,
+        0, 255, 100, 255
+    )
+end
+
 local function drawPlacement()
     if not PropState.PreviewCoords then
         return
@@ -213,6 +239,73 @@ local function drawPlacement()
         0, 150, 255, 125,
         false, false, 2, false, nil, nil, false
     )
+
+    drawFacingLine()
+end
+
+local function spawnSavedProp(propData, storeLoaded)
+    if not propData or not propData.model or not propData.coords then
+        return nil
+    end
+
+    local modelHash = loadModel(propData.model)
+    if not modelHash then
+        return nil
+    end
+
+    local obj = CreateObjectNoOffset(
+        modelHash,
+        propData.coords.x,
+        propData.coords.y,
+        propData.coords.z,
+        true,
+        true,
+        false
+    )
+
+    SetEntityDynamic(obj, false)
+    SetEntityHasGravity(obj, false)
+    FreezeEntityPosition(obj, true)
+
+    if propData.rotation then
+        SetEntityRotation(
+            obj,
+            propData.rotation.x or 0.0,
+            propData.rotation.y or 0.0,
+            propData.rotation.z or 0.0,
+            2,
+            true
+        )
+    end
+
+    SetEntityCoordsNoOffset(
+        obj,
+        propData.coords.x,
+        propData.coords.y,
+        propData.coords.z,
+        false,
+        false,
+        false
+    )
+
+    if storeLoaded then
+        table.insert(PropState.LoadedProps, {
+            entity = obj,
+            data = propData
+        })
+    end
+
+    if isLightType(propData.type) then
+        IncidentNexusWarningLights:RegisterLight(
+            propData.id or ('loaded_%s'):format(#PropState.LoadedProps + 1),
+            propData.stationId or 'unknown_station',
+            obj,
+            propData.mode or 'idle',
+            propData.type
+        )
+    end
+
+    return obj
 end
 
 local function placeProp(stationId)
@@ -250,7 +343,7 @@ local function placeProp(stationId)
         model = prop.model,
         type = prop.type,
         category = prop.category,
-        mode = (prop.type == 'warning_light' or prop.type == 'station_light' or prop.type == 'status_light') and 'idle' or nil,
+        mode = isLightType(prop.type) and 'idle' or nil,
         coords = {
             x = finalCoords.x,
             y = finalCoords.y,
@@ -268,8 +361,14 @@ local function placeProp(stationId)
         data = propData
     })
 
-    if propData.type == 'warning_light' or propData.type == 'station_light' or propData.type == 'status_light' then
-        IncidentNexusWarningLights:RegisterLight(propData.id, propData.stationId, obj, propData.mode or 'idle')
+    if isLightType(propData.type) then
+        IncidentNexusWarningLights:RegisterLight(
+            propData.id,
+            propData.stationId,
+            obj,
+            propData.mode or 'idle',
+            propData.type
+        )
     end
 
     debugPrint(('Placed %s for station %s'):format(prop.label, propData.stationId))
@@ -331,6 +430,20 @@ function IncidentNexusProps:SetActive(state)
     end
 end
 
+function IncidentNexusProps:Rotate(forward)
+    if forward then
+        PropState.PreviewHeading = PropState.PreviewHeading + 5.0
+    else
+        PropState.PreviewHeading = PropState.PreviewHeading - 5.0
+    end
+
+    if PropState.PreviewHeading >= 360.0 then
+        PropState.PreviewHeading = 0.0
+    elseif PropState.PreviewHeading < 0.0 then
+        PropState.PreviewHeading = 355.0
+    end
+end
+
 function IncidentNexusProps:Update()
     updatePreview()
     drawPlacement()
@@ -362,6 +475,45 @@ end
 
 function IncidentNexusProps:Hide()
     hideProp()
+end
+
+function IncidentNexusProps:HideBuilderPlacedProps()
+    for i = 1, #PropState.PlacedProps do
+        local entry = PropState.PlacedProps[i]
+        if entry.entity and DoesEntityExist(entry.entity) then
+            DeleteEntity(entry.entity)
+            entry.entity = nil
+        end
+    end
+
+    IncidentNexusWarningLights:ClearAll()
+end
+
+function IncidentNexusProps:LoadStations(stations)
+    for i = 1, #PropState.LoadedProps do
+        local entry = PropState.LoadedProps[i]
+        if entry.entity and DoesEntityExist(entry.entity) then
+            DeleteEntity(entry.entity)
+        end
+    end
+
+    PropState.LoadedProps = {}
+    IncidentNexusWarningLights:ClearAll()
+
+    if type(stations) ~= 'table' then
+        return
+    end
+
+    for i = 1, #stations do
+        local station = stations[i]
+        if station and type(station.props) == 'table' then
+            for p = 1, #station.props do
+                spawnSavedProp(station.props[p], true)
+            end
+        end
+    end
+
+    debugPrint(('Loaded %s stations into world.'):format(#stations))
 end
 
 function IncidentNexusProps:GetPlacedPropsForExport()
