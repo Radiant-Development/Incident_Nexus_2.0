@@ -13,6 +13,7 @@ shared_scripts {
 client_scripts {
     'client/props.lua',
     'client/doors.lua',
+    'client/warninglights.lua',
     'client/targeting.lua'
 }
 

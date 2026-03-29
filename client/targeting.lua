@@ -4,6 +4,7 @@ local CachedDrafts = {}
 
 local BuilderState = {
     stationName = Config.DefaultStation.name,
+    stationId = 'new_station',
     departmentIndex = 1,
     stationTypeIndex = 1,
     modeIndex = 1,
@@ -18,6 +19,34 @@ end
 
 local function notify(message)
     print(('[%s] %s'):format(Config.DisplayName, message))
+end
+
+local function sanitizeName(name)
+    local safe = tostring(name or 'station')
+    safe = safe:lower()
+    safe = safe:gsub('[^%w%s_-]', '')
+    safe = safe:gsub('%s+', '_')
+    safe = safe:gsub('_+', '_')
+    safe = safe:gsub('^_+', '')
+    safe = safe:gsub('_+$', '')
+
+    if safe == '' then
+        safe = 'station'
+    end
+
+    return safe
+end
+
+local function setStationName(name)
+    if not name or name == '' then
+        notify('Usage: /' .. Config.Commands.SetStationName .. ' [station name]')
+        return
+    end
+
+    BuilderState.stationName = name
+    BuilderState.stationId = sanitizeName(name)
+
+    notify(('Builder station set to %s (%s)'):format(BuilderState.stationName, BuilderState.stationId))
 end
 
 local function drawText2D(x, y, text, scale, r, g, b, a)
@@ -51,25 +80,25 @@ end
 local function disableBuilderControls()
     DisablePlayerFiring(PlayerId(), true)
 
-    DisableControlAction(0, 24, true)   -- left click attack
-    DisableControlAction(0, 25, true)   -- right click aim
-    DisableControlAction(0, 37, true)   -- weapon wheel
-    DisableControlAction(0, 44, true)   -- cover
-    DisableControlAction(0, 45, true)   -- reload
-    DisableControlAction(0, 140, true)  -- melee light
-    DisableControlAction(0, 141, true)  -- melee heavy
-    DisableControlAction(0, 142, true)  -- melee alternate
-    DisableControlAction(0, 143, true)  -- melee block
-    DisableControlAction(0, 257, true)  -- attack 2
-    DisableControlAction(0, 263, true)  -- melee attack 1
-    DisableControlAction(0, 264, true)  -- melee attack 2
+    DisableControlAction(0, 24, true)
+    DisableControlAction(0, 25, true)
+    DisableControlAction(0, 37, true)
+    DisableControlAction(0, 44, true)
+    DisableControlAction(0, 45, true)
+    DisableControlAction(0, 140, true)
+    DisableControlAction(0, 141, true)
+    DisableControlAction(0, 142, true)
+    DisableControlAction(0, 143, true)
+    DisableControlAction(0, 257, true)
+    DisableControlAction(0, 263, true)
+    DisableControlAction(0, 264, true)
 end
 
 local function hideBuilderWeapons()
     local ped = PlayerPedId()
     SetCurrentPedWeapon(ped, `WEAPON_UNARMED`, true)
-    HideHudComponentThisFrame(19) -- weapon wheel
-    HideHudComponentThisFrame(20) -- weapon display
+    HideHudComponentThisFrame(19)
+    HideHudComponentThisFrame(20)
 end
 
 local function currentDepartment()
@@ -133,8 +162,8 @@ local function createDraft()
     local heading = GetEntityHeading(ped)
 
     local stationData = {
-        id = nil,
-        fileName = BuilderState.stationName,
+        id = BuilderState.stationId,
+        fileName = BuilderState.stationId,
         name = BuilderState.stationName,
         department = currentDepartment(),
         stationType = currentStationType(),
@@ -160,7 +189,7 @@ local function handleConfirm()
     local mode = currentMode()
 
     if mode == 'place_prop' then
-        IncidentNexusProps:Confirm()
+        IncidentNexusProps:Confirm(BuilderState.stationId)
     elseif mode == 'hide_prop' then
         IncidentNexusProps:Hide()
     elseif mode == 'select_door' then
@@ -199,50 +228,43 @@ end
 local function drawBuilderMenu()
     drawText2D(0.02, 0.08, 'Incident Nexus Builder', 0.45)
     drawText2D(0.02, 0.115, ('Station Name: %s'):format(BuilderState.stationName), 0.34)
-    drawText2D(0.02, 0.145, ('Department: %s'):format(currentDepartment()), 0.34)
-    drawText2D(0.02, 0.175, ('Station Type: %s'):format(currentStationType()), 0.34)
-    drawText2D(0.02, 0.205, ('Mode: %s'):format(currentMode()), 0.34)
+    drawText2D(0.02, 0.145, ('Station ID: %s'):format(BuilderState.stationId), 0.34)
+    drawText2D(0.02, 0.175, ('Department: %s'):format(currentDepartment()), 0.34)
+    drawText2D(0.02, 0.205, ('Station Type: %s'):format(currentStationType()), 0.34)
+    drawText2D(0.02, 0.235, ('Mode: %s'):format(currentMode()), 0.34)
 
     if not isFirstPerson() then
         drawText2D(0.02, 0.02, 'You need to be in first person to use builder', 0.42, 255, 80, 80, 255)
     end
 
     if currentMode() == 'place_prop' then
-        drawText2D(0.02, 0.235, ('Selected Prop: %s'):format(IncidentNexusProps:GetCurrentLabel()), 0.34)
-        drawText2D(0.02, 0.265, '[Mouse Wheel] Cycle Prop', 0.30)
+        drawText2D(0.02, 0.265, ('Selected Prop: %s'):format(IncidentNexusProps:GetCurrentLabel()), 0.34)
+        drawText2D(0.02, 0.295, '[Mouse Wheel] Cycle Prop', 0.30)
     elseif currentMode() == 'select_door' then
-        drawText2D(0.02, 0.235, ('Selected Doors: %s'):format(IncidentNexusDoors:GetSelectedDoorCount()), 0.34)
-        drawText2D(0.02, 0.265, ('Door Name: %s'):format(IncidentNexusDoors:GetCurrentDoorName()), 0.30)
-        drawText2D(0.02, 0.290, ('Apparatus: %s'):format(IncidentNexusDoors:GetCurrentApparatus()), 0.30)
-        drawText2D(0.02, 0.315, ('Editing: %s'):format(BuilderState.DoorEditField), 0.30)
-        drawText2D(0.02, 0.340, '[Mouse Wheel] Cycle Name/Apparatus', 0.30)
-        drawText2D(0.02, 0.365, '[/backin] toggles editor field', 0.30)
+        drawText2D(0.02, 0.265, ('Selected Doors: %s'):format(IncidentNexusDoors:GetSelectedDoorCount()), 0.34)
+        drawText2D(0.02, 0.295, ('Door Name: %s'):format(IncidentNexusDoors:GetCurrentDoorName()), 0.30)
+        drawText2D(0.02, 0.320, ('Apparatus: %s'):format(IncidentNexusDoors:GetCurrentApparatus()), 0.30)
+        drawText2D(0.02, 0.345, ('Editing: %s'):format(BuilderState.DoorEditField), 0.30)
+        drawText2D(0.02, 0.370, '[Mouse Wheel] Cycle Name/Apparatus', 0.30)
+        drawText2D(0.02, 0.395, '[/backin] toggles editor field', 0.30)
     else
-        drawText2D(0.02, 0.265, '[Mouse Wheel] Cycle Builder Mode', 0.30)
+        drawText2D(0.02, 0.295, '[Mouse Wheel] Cycle Builder Mode', 0.30)
     end
 
-    drawText2D(0.02, 0.405, '[Left Click] Confirm / Place / Select', 0.30)
-    drawText2D(0.02, 0.430, '[Right Click] Remove / Undo', 0.30)
-    drawText2D(0.02, 0.455, '[E] Export Draft', 0.30)
-    drawText2D(0.02, 0.480, '[/incidentbuilder] Exit Builder', 0.30)
+    drawText2D(0.02, 0.435, '[Left Click] Confirm / Place / Select', 0.30)
+    drawText2D(0.02, 0.460, '[Right Click] Remove / Undo', 0.30)
+    drawText2D(0.02, 0.485, '[E] Export Draft', 0.30)
+    drawText2D(0.02, 0.510, ('[/%s] Set Station Name'):format(Config.Commands.SetStationName), 0.30)
+    drawText2D(0.02, 0.535, '[/incidentbuilder] Exit Builder', 0.30)
 end
 
-RegisterCommand('nexusamber', function()
-    IncidentNexusWarningLights:SetStationMode(BuilderState.stationName, 'idle')
-    notify(('Warning lights set to amber for station %s'):format(BuilderState.stationName))
-end, false)
-
-RegisterCommand('nexusred', function()
-    IncidentNexusWarningLights:SetStationMode(BuilderState.stationName, 'alert')
-    notify(('Warning lights set to red for station %s'):format(BuilderState.stationName))
-end, false)
-
-RegisterCommand('nexuslightsoff', function()
-    IncidentNexusWarningLights:SetStationMode(BuilderState.stationName, 'off')
-    notify(('Warning lights turned off for station %s'):format(BuilderState.stationName))
-end, false)
 RegisterCommand(Config.Commands.Builder, function()
     toggleBuilder()
+end, false)
+
+RegisterCommand(Config.Commands.SetStationName, function(_, args)
+    local name = table.concat(args or {}, ' ')
+    setStationName(name)
 end, false)
 
 RegisterCommand(Config.Commands.TestAlert, function()
@@ -266,6 +288,21 @@ RegisterCommand(Config.Commands.BackIn, function()
     end
 
     notify(('Door edit field: %s'):format(BuilderState.DoorEditField))
+end, false)
+
+RegisterCommand('nexusamber', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'idle')
+    notify(('Warning lights set to amber for station %s'):format(BuilderState.stationId))
+end, false)
+
+RegisterCommand('nexusred', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'alert')
+    notify(('Warning lights set to red for station %s'):format(BuilderState.stationId))
+end, false)
+
+RegisterCommand('nexuslightsoff', function()
+    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'off')
+    notify(('Warning lights turned off for station %s'):format(BuilderState.stationId))
 end, false)
 
 CreateThread(function()

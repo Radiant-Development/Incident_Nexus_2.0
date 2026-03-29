@@ -6,6 +6,7 @@ local PropState = {
     PreviewEntity = nil,
     PreviewCoords = nil,
     PreviewHeading = 0.0,
+    PreviewNormal = nil,
     PlacedProps = {},
     HiddenProps = {}
 }
@@ -34,6 +35,7 @@ local function loadModel(model)
     while not HasModelLoaded(modelHash) do
         Wait(0)
         if GetGameTimer() > timeout then
+            debugPrint(('Model load timed out: %s'):format(model))
             return nil
         end
     end
@@ -67,8 +69,8 @@ local function raycastFromCamera(distance)
         0
     )
 
-    local _, hit, endCoords, _, entityHit = GetShapeTestResult(ray)
-    return hit == 1, endCoords, entityHit
+    local _, hit, endCoords, surfaceNormal, entityHit = GetShapeTestResultIncludingMaterial(ray)
+    return hit == 1, endCoords, surfaceNormal, entityHit
 end
 
 local function deletePreview()
@@ -77,56 +79,88 @@ local function deletePreview()
     end
 
     PropState.PreviewEntity = nil
+    PropState.PreviewCoords = nil
+    PropState.PreviewNormal = nil
+end
+
+local function applyPreviewTransform(entity, coords, normal)
+    if not entity or not DoesEntityExist(entity) or not coords then
+        return
+    end
+
+    SetEntityCoordsNoOffset(entity, coords.x, coords.y, coords.z, false, false, false)
+
+    if normal then
+        local absZ = math.abs(normal.z)
+
+        if absZ > 0.85 then
+            SetEntityRotation(entity, 0.0, 0.0, PropState.PreviewHeading, 2, true)
+        elseif absZ < 0.2 then
+            SetEntityRotation(entity, 90.0, 0.0, PropState.PreviewHeading, 2, true)
+        else
+            SetEntityRotation(entity, 45.0, 0.0, PropState.PreviewHeading, 2, true)
+        end
+    else
+        SetEntityRotation(entity, 0.0, 0.0, PropState.PreviewHeading, 2, true)
+    end
 end
 
 local function createPreview()
     deletePreview()
 
     local prop = getCurrentProp()
-    if not prop then return end
+    if not prop then
+        return
+    end
 
     local modelHash = loadModel(prop.model)
-    if not modelHash then return end
+    if not modelHash then
+        return
+    end
 
-    local hit, coords = raycastFromCamera(Config.SelectionDistance)
-    if not hit then return end
+    local hit, coords, normal = raycastFromCamera(Config.SelectionDistance)
+    if not hit or not coords then
+        return
+    end
 
     local obj = CreateObject(modelHash, coords.x, coords.y, coords.z, false, false, false)
-
     SetEntityAlpha(obj, 180, false)
     SetEntityCollision(obj, false, false)
     FreezeEntityPosition(obj, true)
 
     PropState.PreviewEntity = obj
     PropState.PreviewCoords = coords
+    PropState.PreviewNormal = normal
+
+    applyPreviewTransform(obj, coords, normal)
+    SetModelAsNoLongerNeeded(modelHash)
 end
 
 local function updatePreview()
-    if not PropState.Active then return end
+    if not PropState.Active then
+        return
+    end
 
-    local hit, coords = raycastFromCamera(Config.SelectionDistance)
-    if not hit then return end
+    local hit, coords, normal = raycastFromCamera(Config.SelectionDistance)
+    if not hit or not coords then
+        return
+    end
 
     PropState.PreviewCoords = coords
+    PropState.PreviewNormal = normal
 
-    if not PropState.PreviewEntity then
+    if not PropState.PreviewEntity or not DoesEntityExist(PropState.PreviewEntity) then
         createPreview()
         return
     end
 
-    SetEntityCoordsNoOffset(
-        PropState.PreviewEntity,
-        coords.x,
-        coords.y,
-        coords.z,
-        false,
-        false,
-        false
-    )
+    applyPreviewTransform(PropState.PreviewEntity, coords, normal)
 end
 
 local function drawPlacement()
-    if not PropState.PreviewCoords then return end
+    if not PropState.PreviewCoords then
+        return
+    end
 
     local ped = PlayerPedId()
     local pedCoords = GetEntityCoords(ped)
@@ -140,42 +174,44 @@ local function drawPlacement()
 
     DrawMarker(
         1,
-        target.x, target.y, target.z - 1.0,
+        target.x, target.y, target.z,
         0.0, 0.0, 0.0,
         0.0, 0.0, 0.0,
-        0.35, 0.35, 0.15,
+        0.2, 0.2, 0.2,
         0, 150, 255, 125,
         false, false, 2, false, nil, nil, false
     )
 end
 
-local function placeProp(stationName)
+local function placeProp(stationId)
     local prop = getCurrentProp()
-    if not prop then return end
+    if not prop then
+        return
+    end
 
     local coords = PropState.PreviewCoords
-    if not coords then return end
+    local normal = PropState.PreviewNormal
+
+    if not coords then
+        return
+    end
 
     local modelHash = loadModel(prop.model)
-    if not modelHash then return end
+    if not modelHash then
+        return
+    end
 
-    local obj = CreateObject(
-        modelHash,
-        coords.x,
-        coords.y,
-        coords.z,
-        true,
-        true,
-        false
-    )
-
+    local obj = CreateObject(modelHash, coords.x, coords.y, coords.z, true, true, false)
     FreezeEntityPosition(obj, true)
 
+    applyPreviewTransform(obj, coords, normal)
+
     local finalCoords = GetEntityCoords(obj)
+    local rot = GetEntityRotation(obj, 2)
 
     local propData = {
         id = ('prop_%s'):format(#PropState.PlacedProps + 1),
-        stationId = stationName or 'unknown_station',
+        stationId = stationId or 'unknown_station',
         label = prop.label,
         model = prop.model,
         type = prop.type,
@@ -185,6 +221,11 @@ local function placeProp(stationName)
             x = finalCoords.x,
             y = finalCoords.y,
             z = finalCoords.z
+        },
+        rotation = {
+            x = rot.x,
+            y = rot.y,
+            z = rot.z
         }
     }
 
@@ -197,12 +238,14 @@ local function placeProp(stationName)
         IncidentNexusWarningLights:RegisterLight(propData.id, propData.stationId, obj, propData.mode or 'idle')
     end
 
-    debugPrint(('Placed %s'):format(prop.label))
+    debugPrint(('Placed %s for station %s'):format(prop.label, propData.stationId))
 end
 
 local function removeLast()
     local last = PropState.PlacedProps[#PropState.PlacedProps]
-    if not last then return end
+    if not last then
+        return
+    end
 
     if last.entity and DoesEntityExist(last.entity) then
         DeleteEntity(last.entity)
@@ -213,11 +256,18 @@ local function removeLast()
     end
 
     table.remove(PropState.PlacedProps, #PropState.PlacedProps)
+    debugPrint('Removed last placed prop.')
 end
 
 local function hideProp()
-    local hit, coords, entity = raycastFromCamera(Config.SelectionDistance)
-    if not hit or not entity then return end
+    local hit, _, _, entity = raycastFromCamera(Config.SelectionDistance)
+    if not hit or not entity or entity == 0 then
+        return
+    end
+
+    if not DoesEntityExist(entity) then
+        return
+    end
 
     local entityCoords = GetEntityCoords(entity)
     local model = GetEntityModel(entity)
@@ -233,6 +283,8 @@ local function hideProp()
             z = entityCoords.z
         }
     })
+
+    debugPrint('Hidden targeted prop.')
 end
 
 function IncidentNexusProps:SetActive(state)
@@ -266,8 +318,8 @@ function IncidentNexusProps:Cycle(forward)
     createPreview()
 end
 
-function IncidentNexusProps:Confirm(stationName)
-    placeProp(stationName)
+function IncidentNexusProps:Confirm(stationId)
+    placeProp(stationId)
 end
 
 function IncidentNexusProps:Cancel()
@@ -294,5 +346,5 @@ end
 
 function IncidentNexusProps:GetCurrentLabel()
     local prop = getCurrentProp()
-    return prop and prop.label or "None"
+    return prop and prop.label or 'None'
 end

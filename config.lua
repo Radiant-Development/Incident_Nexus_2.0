@@ -10,6 +10,7 @@ Config.Commands = {
     TestAlert = 'nexustest',
     BayOpen = 'bayopen',
     BackIn = 'backin'
+    SetStationName = 'nexussetname'
 }
 
 Config.Keys = {
