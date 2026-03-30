@@ -1,9 +1,11 @@
+print('[Incident Nexus] targeting.lua loaded')
+
 local BuilderActive = false
 local CachedStations = {}
 local CachedDrafts = {}
 
 local BuilderState = {
-    stationName = Config.DefaultStation.name,
+    stationName = Config.DefaultStation.name or 'New Station',
     stationId = 'new_station',
     departmentIndex = 1,
     stationTypeIndex = 1,
@@ -13,12 +15,12 @@ local BuilderState = {
 
 local function debugPrint(message)
     if Config.Debug then
-        print(('[%s] %s'):format(Config.DisplayName, message))
+        print(('[%s] %s'):format(Config.DisplayName or 'Incident Nexus', message))
     end
 end
 
 local function notify(message)
-    print(('[%s] %s'):format(Config.DisplayName, message))
+    print(('[%s] %s'):format(Config.DisplayName or 'Incident Nexus', message))
 end
 
 local function sanitizeName(name)
@@ -39,7 +41,7 @@ end
 
 local function setStationName(name)
     if not name or name == '' then
-        notify('Usage: /' .. Config.Commands.SetStationName .. ' [station name]')
+        notify('Usage: /' .. (Config.Commands.SetStationName or 'nexussetname') .. ' [station name]')
         return
     end
 
@@ -53,7 +55,6 @@ local function drawText2D(x, y, text, scale, r, g, b, a)
     SetTextFont(4)
     SetTextScale(scale or 0.35, scale or 0.35)
     SetTextColour(r or 255, g or 255, b or 255, a or 215)
-    SetTextCentre(false)
     SetTextOutline()
     BeginTextCommandDisplayText('STRING')
     AddTextComponentSubstringPlayerName(text)
@@ -79,7 +80,6 @@ end
 
 local function disableBuilderControls()
     DisablePlayerFiring(PlayerId(), true)
-
     DisableControlAction(0, 24, true)
     DisableControlAction(0, 25, true)
     DisableControlAction(0, 37, true)
@@ -102,23 +102,28 @@ local function hideBuilderWeapons()
 end
 
 local function currentDepartment()
-    return Config.Departments[BuilderState.departmentIndex] or 'fire'
+    return (Config.Departments and Config.Departments[BuilderState.departmentIndex]) or 'fire'
 end
 
 local function currentStationType()
-    return Config.StationTypes[BuilderState.stationTypeIndex] or 'fire_station'
+    return (Config.StationTypes and Config.StationTypes[BuilderState.stationTypeIndex]) or 'fire_station'
 end
 
 local function currentMode()
-    return Config.BuilderModes[BuilderState.modeIndex] or 'place_prop'
+    return (Config.BuilderModes and Config.BuilderModes[BuilderState.modeIndex]) or 'place_prop'
 end
 
 local function setModeActivity()
     local mode = currentMode()
-    local allowBuilderInteraction = BuilderActive and isFirstPerson()
+    local allowInteraction = BuilderActive and isFirstPerson()
 
-    IncidentNexusProps:SetActive(allowBuilderInteraction and (mode == 'place_prop' or mode == 'hide_prop'))
-    IncidentNexusDoors:SetActive(allowBuilderInteraction and mode == 'select_door')
+    if IncidentNexusProps then
+        IncidentNexusProps:SetActive(allowInteraction and (mode == 'place_prop' or mode == 'hide_prop'))
+    end
+
+    if IncidentNexusDoors then
+        IncidentNexusDoors:SetActive(allowInteraction and mode == 'select_door')
+    end
 end
 
 local function toggleBuilder()
@@ -130,18 +135,23 @@ local function toggleBuilder()
         TriggerServerEvent('incident-nexus:server:requestDrafts')
     else
         notify('Builder disabled.')
-        IncidentNexusProps:HideBuilderPlacedProps()
+        if IncidentNexusProps then
+            IncidentNexusProps:HideBuilderPlacedProps()
+            IncidentNexusProps:SetActive(false)
+        end
+        if IncidentNexusDoors then
+            IncidentNexusDoors:SetActive(false)
+        end
     end
 
     setModeActivity()
-
-    if not BuilderActive then
-        IncidentNexusProps:SetActive(false)
-        IncidentNexusDoors:SetActive(false)
-    end
 end
 
 local function cycleBuilderMode(forward)
+    if not Config.BuilderModes or #Config.BuilderModes == 0 then
+        return
+    end
+
     if forward then
         BuilderState.modeIndex = BuilderState.modeIndex + 1
         if BuilderState.modeIndex > #Config.BuilderModes then
@@ -174,9 +184,9 @@ local function createDraft()
             z = coords.z
         },
         heading = heading,
-        props = IncidentNexusProps:GetPlacedPropsForExport(),
-        hiddenProps = IncidentNexusProps:GetHiddenPropsForExport(),
-        doors = IncidentNexusDoors:GetDoorsForExport(),
+        props = IncidentNexusProps and IncidentNexusProps:GetPlacedPropsForExport() or {},
+        hiddenProps = IncidentNexusProps and IncidentNexusProps:GetHiddenPropsForExport() or {},
+        doors = IncidentNexusDoors and IncidentNexusDoors:GetDoorsForExport() or {},
         traffic = {},
         screens = {},
         computers = {},
@@ -189,11 +199,11 @@ end
 local function handleConfirm()
     local mode = currentMode()
 
-    if mode == 'place_prop' then
+    if mode == 'place_prop' and IncidentNexusProps then
         IncidentNexusProps:Confirm(BuilderState.stationId)
-    elseif mode == 'hide_prop' then
+    elseif mode == 'hide_prop' and IncidentNexusProps then
         IncidentNexusProps:Hide()
-    elseif mode == 'select_door' then
+    elseif mode == 'select_door' and IncidentNexusDoors then
         IncidentNexusDoors:ConfirmSelect()
     end
 end
@@ -201,11 +211,9 @@ end
 local function handleCancel()
     local mode = currentMode()
 
-    if mode == 'place_prop' then
+    if (mode == 'place_prop' or mode == 'hide_prop') and IncidentNexusProps then
         IncidentNexusProps:Cancel()
-    elseif mode == 'hide_prop' then
-        IncidentNexusProps:Cancel()
-    elseif mode == 'select_door' then
+    elseif mode == 'select_door' and IncidentNexusDoors then
         IncidentNexusDoors:RemoveLastSelected()
     end
 end
@@ -213,11 +221,11 @@ end
 local function handleScroll(forward)
     local mode = currentMode()
 
-    if mode == 'place_prop' then
+    if mode == 'place_prop' and IncidentNexusProps then
         IncidentNexusProps:Cycle(forward)
     elseif mode == 'hide_prop' then
         cycleBuilderMode(forward)
-    elseif mode == 'select_door' then
+    elseif mode == 'select_door' and IncidentNexusDoors then
         if BuilderState.DoorEditField == 'name' then
             IncidentNexusDoors:CycleDoorName(forward)
         else
@@ -238,12 +246,11 @@ local function drawBuilderMenu()
         drawText2D(0.02, 0.02, 'You need to be in first person to use builder', 0.42, 255, 80, 80, 255)
     end
 
-    if currentMode() == 'place_prop' then
+    if currentMode() == 'place_prop' and IncidentNexusProps then
         drawText2D(0.02, 0.265, ('Selected Prop: %s'):format(IncidentNexusProps:GetCurrentLabel()), 0.34)
-        drawText2D(0.02, 0.295, ('Preview Heading: %.1f'):format(IncidentNexusProps and 0.0 or 0.0), 0.30)
-        drawText2D(0.02, 0.320, '[Mouse Wheel] Cycle Prop', 0.30)
-        drawText2D(0.02, 0.345, '[Left/Right Arrow] Rotate Prop', 0.30)
-    elseif currentMode() == 'select_door' then
+        drawText2D(0.02, 0.295, '[Mouse Wheel] Cycle Prop', 0.30)
+        drawText2D(0.02, 0.320, '[Left/Right Arrow] Rotate Prop', 0.30)
+    elseif currentMode() == 'select_door' and IncidentNexusDoors then
         drawText2D(0.02, 0.265, ('Selected Doors: %s'):format(IncidentNexusDoors:GetSelectedDoorCount()), 0.34)
         drawText2D(0.02, 0.295, ('Door Name: %s'):format(IncidentNexusDoors:GetCurrentDoorName()), 0.30)
         drawText2D(0.02, 0.320, ('Apparatus: %s'):format(IncidentNexusDoors:GetCurrentApparatus()), 0.30)
@@ -257,7 +264,7 @@ local function drawBuilderMenu()
     drawText2D(0.02, 0.435, '[Left Click] Confirm / Place / Select', 0.30)
     drawText2D(0.02, 0.460, '[Right Click] Remove / Undo', 0.30)
     drawText2D(0.02, 0.485, '[E] Export Draft', 0.30)
-    drawText2D(0.02, 0.510, ('[/%s] Set Station Name'):format(Config.Commands.SetStationName), 0.30)
+    drawText2D(0.02, 0.510, ('[/%s] Set Station Name'):format(Config.Commands.SetStationName or 'nexussetname'), 0.30)
     drawText2D(0.02, 0.535, '[/incidentbuilder] Exit Builder', 0.30)
 end
 
@@ -271,7 +278,7 @@ RegisterCommand(Config.Commands.SetStationName, function(_, args)
 end, false)
 
 RegisterCommand(Config.Commands.TestAlert, function()
-    TriggerServerEvent('incident-nexus:server:testAlert', 'test_station')
+    TriggerServerEvent('incident-nexus:server:testAlert', BuilderState.stationId)
 end, false)
 
 RegisterCommand(Config.Commands.BayOpen, function()
@@ -294,18 +301,51 @@ RegisterCommand(Config.Commands.BackIn, function()
 end, false)
 
 RegisterCommand('nexusamber', function()
-    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'idle')
+    if IncidentNexusWarningLights then
+        IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'idle')
+    end
+    if IncidentNexusScreens then
+        IncidentNexusScreens:SetStationIdle(BuilderState.stationId)
+    end
     notify(('Warning lights set to amber for station %s'):format(BuilderState.stationId))
 end, false)
 
 RegisterCommand('nexusred', function()
-    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'alert')
+    if IncidentNexusWarningLights then
+        IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'alert')
+    end
+    if IncidentNexusScreens then
+        IncidentNexusScreens:SetStationAlert(BuilderState.stationId, 'STRUCTURE FIRE', 'Units respond immediately')
+    end
     notify(('Warning lights set to red for station %s'):format(BuilderState.stationId))
 end, false)
 
 RegisterCommand('nexuslightsoff', function()
-    IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'off')
+    if IncidentNexusWarningLights then
+        IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'off')
+    end
     notify(('Warning lights turned off for station %s'):format(BuilderState.stationId))
+end, false)
+
+RegisterCommand('nexusscreenidle', function()
+    if IncidentNexusScreens then
+        IncidentNexusScreens:SetStationIdle(BuilderState.stationId)
+    end
+    notify(('Screen set to idle for station %s'):format(BuilderState.stationId))
+end, false)
+
+RegisterCommand('nexusscreenalert', function(_, args)
+    local title = args[1] or 'STRUCTURE FIRE'
+    local message = table.concat(args, ' ', 2)
+    if message == '' then
+        message = 'Units respond immediately'
+    end
+
+    if IncidentNexusScreens then
+        IncidentNexusScreens:SetStationAlert(BuilderState.stationId, title, message)
+    end
+
+    notify(('Screen alert set for station %s'):format(BuilderState.stationId))
 end, false)
 
 CreateThread(function()
@@ -334,9 +374,9 @@ CreateThread(function()
             if firstPerson then
                 local mode = currentMode()
 
-                if mode == 'place_prop' or mode == 'hide_prop' then
+                if (mode == 'place_prop' or mode == 'hide_prop') and IncidentNexusProps then
                     IncidentNexusProps:Update()
-                elseif mode == 'select_door' then
+                elseif mode == 'select_door' and IncidentNexusDoors then
                     IncidentNexusDoors:Update()
                 end
 
@@ -360,11 +400,11 @@ CreateThread(function()
                     handleScroll(false)
                 end
 
-                if IsDisabledControlJustReleased(0, Config.Keys.RotateLeft) and currentMode() == 'place_prop' then
+                if IsDisabledControlJustReleased(0, Config.Keys.RotateLeft) and currentMode() == 'place_prop' and IncidentNexusProps then
                     IncidentNexusProps:Rotate(false)
                 end
 
-                if IsDisabledControlJustReleased(0, Config.Keys.RotateRight) and currentMode() == 'place_prop' then
+                if IsDisabledControlJustReleased(0, Config.Keys.RotateRight) and currentMode() == 'place_prop' and IncidentNexusProps then
                     IncidentNexusProps:Rotate(true)
                 end
             end
@@ -377,7 +417,10 @@ end)
 RegisterNetEvent('incident-nexus:client:receiveStations', function(stations)
     CachedStations = stations or {}
     debugPrint(('Received %s stations.'):format(#CachedStations))
-    IncidentNexusProps:LoadStations(CachedStations)
+
+    if IncidentNexusProps then
+        IncidentNexusProps:LoadStations(CachedStations)
+    end
 end)
 
 RegisterNetEvent('incident-nexus:client:receiveDrafts', function(drafts)
@@ -387,7 +430,18 @@ end)
 
 RegisterNetEvent('incident-nexus:client:testAlert', function(stationId)
     notify(('Test alert triggered for station: %s'):format(tostring(stationId)))
-    IncidentNexusWarningLights:SetStationMode(stationId, 'alert')
+
+    if IncidentNexusWarningLights then
+        IncidentNexusWarningLights:SetStationMode(stationId, 'alert')
+    end
+
+    if IncidentNexusScreens then
+        IncidentNexusScreens:SetStationAlert(
+            stationId,
+            'STRUCTURE FIRE',
+            'Units respond immediately'
+        )
+    end
 
     SendNUIMessage({
         action = 'showDispatch',
