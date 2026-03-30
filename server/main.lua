@@ -1,420 +1,299 @@
-print('[Incident Nexus] targeting.lua loaded')
+local ResourceName = GetCurrentResourceName()
 
-local BuilderActive = false
-local CachedStations = {}
-local CachedDrafts = {}
+-- Locked under escrow
+local VERSION = "1.4.0"
+local VERSION_URL = "https://raw.githubusercontent.com/YOUR_PUBLIC_VERSION_REPO/main/version.json"
+local LOCATIONS_RESOURCE = "nexus_locations"
 
-local BuilderState = {
-    stationName = Config.DefaultStation.name or 'New Station',
-    stationId = 'new_station',
-    departmentIndex = 1,
-    stationTypeIndex = 1,
-    modeIndex = 1,
-    DoorEditField = 'name'
-}
+local Stations = {}
+local Drafts = {}
 
-local function debugPrint(message)
-    if Config.Debug then
-        print(('[%s] %s'):format(Config.DisplayName or 'Incident Nexus', message))
+local function PrintLine(color, text)
+    print((color .. text .. "^7"))
+end
+
+local function PrintSuccess(text)
+    print(("^2[Incident Nexus]^7 %s"):format(text))
+end
+
+local function PrintWarning(text)
+    print(("^3[Incident Nexus]^7 %s"):format(text))
+end
+
+local function PrintError(text)
+    print(("^1[Incident Nexus]^7 %s"):format(text))
+end
+
+local function StartupBanner()
+    PrintLine("^5", [[
+██╗███╗   ██╗ ██████╗██╗██████╗ ███████╗███╗   ██╗████████╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗
+██║████╗  ██║██╔════╝██║██╔══██╗██╔════╝████╗  ██║╚══██╔══╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝
+██║██╔██╗ ██║██║     ██║██║  ██║█████╗  ██╔██╗ ██║   ██║       ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗
+██║██║╚██╗██║██║     ██║██║  ██║██╔══╝  ██║╚██╗██║   ██║       ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║
+██║██║ ╚████║╚██████╗██║██████╔╝███████╗██║ ╚████║   ██║       ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║
+╚═╝╚═╝  ╚═══╝ ╚═════╝╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝       ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+]])
+
+    PrintLine("^5", "================================================================================")
+    PrintLine("^5", "                        Incident Nexus - Standalone Edition")
+    PrintLine("^5", "                          Created By RebelGamer2k20")
+    PrintLine("^5", ("                                Version: %s"):format(VERSION))
+    PrintLine("^5", "================================================================================")
+end
+
+local function VersionCheck()
+    if not VERSION_URL or VERSION_URL == "" or VERSION_URL:find("YOUR_PUBLIC_VERSION_REPO", 1, true) then
+        PrintWarning("Version check skipped. Set a public version.json URL in server/main.lua")
+        return
     end
+
+    PerformHttpRequest(VERSION_URL, function(statusCode, response)
+        if statusCode ~= 200 then
+            PrintWarning(("Version check failed. HTTP %s"):format(tostring(statusCode)))
+            return
+        end
+
+        local ok, data = pcall(json.decode, response)
+        if not ok or type(data) ~= "table" then
+            PrintError("Version check failed. Invalid JSON response.")
+            return
+        end
+
+        if not data.version then
+            PrintError("Version check failed. Missing version field.")
+            return
+        end
+
+        if data.version ~= VERSION then
+            PrintLine("^3", "================================================================================")
+            PrintLine("^3", "                         Incident Nexus Update Available")
+            PrintLine("^3", ("                         Current Version: %s"):format(VERSION))
+            PrintLine("^3", ("                         Latest Version : %s"):format(data.version))
+            PrintLine("^3", "================================================================================")
+        else
+            PrintSuccess(("Running Latest Version (%s)"):format(VERSION))
+        end
+    end, "GET")
 end
 
-local function notify(message)
-    print(('[%s] %s'):format(Config.DisplayName or 'Incident Nexus', message))
+local function generateId(prefix)
+    return ("%s_%s_%s"):format(prefix, os.time(), math.random(1000, 9999))
 end
 
-local function sanitizeName(name)
-    local safe = tostring(name or 'station')
+local function sanitizeFileName(name)
+    local safe = tostring(name or "station")
     safe = safe:lower()
-    safe = safe:gsub('[^%w%s_-]', '')
-    safe = safe:gsub('%s+', '_')
-    safe = safe:gsub('_+', '_')
-    safe = safe:gsub('^_+', '')
-    safe = safe:gsub('_+$', '')
+    safe = safe:gsub("[^%w_%-]+", "_")
+    safe = safe:gsub("_+", "_")
+    safe = safe:gsub("^_+", "")
+    safe = safe:gsub("_+$", "")
 
-    if safe == '' then
-        safe = 'station'
+    if safe == "" then
+        safe = generateId("station")
     end
 
     return safe
 end
 
-local function setStationName(name)
-    if not name or name == '' then
-        notify('Usage: /' .. (Config.Commands.SetStationName or 'nexussetname') .. ' [station name]')
-        return
-    end
+local function serializeValue(value, indent)
+    indent = indent or 0
+    local spacing = string.rep("    ", indent)
 
-    BuilderState.stationName = name
-    BuilderState.stationId = sanitizeName(name)
+    if type(value) == "table" then
+        local isArray = true
+        local expectedIndex = 1
 
-    notify(('Builder station set to %s (%s)'):format(BuilderState.stationName, BuilderState.stationId))
-end
-
-local function drawText2D(x, y, text, scale, r, g, b, a)
-    SetTextFont(4)
-    SetTextScale(scale or 0.35, scale or 0.35)
-    SetTextColour(r or 255, g or 255, b or 255, a or 215)
-    SetTextOutline()
-    BeginTextCommandDisplayText('STRING')
-    AddTextComponentSubstringPlayerName(text)
-    EndTextCommandDisplayText(x, y)
-end
-
-local function drawText3D(x, y, z, text)
-    SetDrawOrigin(x, y, z, 0)
-    SetTextScale(0.35, 0.35)
-    SetTextFont(4)
-    SetTextProportional(1)
-    SetTextColour(255, 255, 255, 215)
-    SetTextEntry('STRING')
-    SetTextCentre(true)
-    AddTextComponentString(text)
-    DrawText(0.0, 0.0)
-    ClearDrawOrigin()
-end
-
-local function isFirstPerson()
-    return GetFollowPedCamViewMode() == 4
-end
-
-local function disableBuilderControls()
-    DisablePlayerFiring(PlayerId(), true)
-    DisableControlAction(0, 24, true)
-    DisableControlAction(0, 25, true)
-    DisableControlAction(0, 37, true)
-    DisableControlAction(0, 44, true)
-    DisableControlAction(0, 45, true)
-    DisableControlAction(0, 140, true)
-    DisableControlAction(0, 141, true)
-    DisableControlAction(0, 142, true)
-    DisableControlAction(0, 143, true)
-    DisableControlAction(0, 257, true)
-    DisableControlAction(0, 263, true)
-    DisableControlAction(0, 264, true)
-end
-
-local function hideBuilderWeapons()
-    local ped = PlayerPedId()
-    SetCurrentPedWeapon(ped, `WEAPON_UNARMED`, true)
-    HideHudComponentThisFrame(19)
-    HideHudComponentThisFrame(20)
-end
-
-local function currentDepartment()
-    return (Config.Departments and Config.Departments[BuilderState.departmentIndex]) or 'fire'
-end
-
-local function currentStationType()
-    return (Config.StationTypes and Config.StationTypes[BuilderState.stationTypeIndex]) or 'fire_station'
-end
-
-local function currentMode()
-    return (Config.BuilderModes and Config.BuilderModes[BuilderState.modeIndex]) or 'place_prop'
-end
-
-local function setModeActivity()
-    local mode = currentMode()
-    local allowInteraction = BuilderActive and isFirstPerson()
-
-    if IncidentNexusProps then
-        IncidentNexusProps:SetActive(allowInteraction and (mode == 'place_prop' or mode == 'hide_prop'))
-    end
-
-    if IncidentNexusDoors then
-        IncidentNexusDoors:SetActive(allowInteraction and mode == 'select_door')
-    end
-end
-
-local function toggleBuilder()
-    BuilderActive = not BuilderActive
-
-    if BuilderActive then
-        notify('Builder enabled.')
-        TriggerServerEvent('incident-nexus:server:requestStations')
-        TriggerServerEvent('incident-nexus:server:requestDrafts')
-    else
-        notify('Builder disabled.')
-        if IncidentNexusProps then
-            IncidentNexusProps:HideBuilderPlacedProps()
-            IncidentNexusProps:SetActive(false)
+        for k, _ in pairs(value) do
+            if k ~= expectedIndex then
+                isArray = false
+                break
+            end
+            expectedIndex = expectedIndex + 1
         end
-        if IncidentNexusDoors then
-            IncidentNexusDoors:SetActive(false)
-        end
-    end
 
-    setModeActivity()
-end
+        local lines = {"{"}
 
-local function cycleBuilderMode(forward)
-    if not Config.BuilderModes or #Config.BuilderModes == 0 then
-        return
-    end
-
-    if forward then
-        BuilderState.modeIndex = BuilderState.modeIndex + 1
-        if BuilderState.modeIndex > #Config.BuilderModes then
-            BuilderState.modeIndex = 1
-        end
-    else
-        BuilderState.modeIndex = BuilderState.modeIndex - 1
-        if BuilderState.modeIndex < 1 then
-            BuilderState.modeIndex = #Config.BuilderModes
-        end
-    end
-
-    setModeActivity()
-end
-
-local function createDraft()
-    local ped = PlayerPedId()
-    local coords = GetEntityCoords(ped)
-    local heading = GetEntityHeading(ped)
-
-    local stationData = {
-        id = BuilderState.stationId,
-        fileName = BuilderState.stationId,
-        name = BuilderState.stationName,
-        department = currentDepartment(),
-        stationType = currentStationType(),
-        coords = {
-            x = coords.x,
-            y = coords.y,
-            z = coords.z
-        },
-        heading = heading,
-        props = IncidentNexusProps and IncidentNexusProps:GetPlacedPropsForExport() or {},
-        hiddenProps = IncidentNexusProps and IncidentNexusProps:GetHiddenPropsForExport() or {},
-        doors = IncidentNexusDoors and IncidentNexusDoors:GetDoorsForExport() or {},
-        traffic = {},
-        screens = {},
-        computers = {},
-        warningLights = {}
-    }
-
-    TriggerServerEvent('incident-nexus:server:createStationDraft', stationData)
-end
-
-local function handleConfirm()
-    local mode = currentMode()
-
-    if mode == 'place_prop' and IncidentNexusProps then
-        IncidentNexusProps:Confirm(BuilderState.stationId)
-    elseif mode == 'hide_prop' and IncidentNexusProps then
-        IncidentNexusProps:Hide()
-    elseif mode == 'select_door' and IncidentNexusDoors then
-        IncidentNexusDoors:ConfirmSelect()
-    end
-end
-
-local function handleCancel()
-    local mode = currentMode()
-
-    if (mode == 'place_prop' or mode == 'hide_prop') and IncidentNexusProps then
-        IncidentNexusProps:Cancel()
-    elseif mode == 'select_door' and IncidentNexusDoors then
-        IncidentNexusDoors:RemoveLastSelected()
-    end
-end
-
-local function handleScroll(forward)
-    local mode = currentMode()
-
-    if mode == 'place_prop' and IncidentNexusProps then
-        IncidentNexusProps:Cycle(forward)
-    elseif mode == 'hide_prop' then
-        cycleBuilderMode(forward)
-    elseif mode == 'select_door' and IncidentNexusDoors then
-        if BuilderState.DoorEditField == 'name' then
-            IncidentNexusDoors:CycleDoorName(forward)
+        if isArray then
+            for _, v in ipairs(value) do
+                lines[#lines + 1] = string.rep("    ", indent + 1) .. serializeValue(v, indent + 1) .. ","
+            end
         else
-            IncidentNexusDoors:CycleApparatus(forward)
-        end
-    end
-end
-
-local function drawBuilderMenu()
-    drawText2D(0.02, 0.08, 'Incident Nexus Builder', 0.45)
-    drawText2D(0.02, 0.115, ('Station Name: %s'):format(BuilderState.stationName), 0.34)
-    drawText2D(0.02, 0.145, ('Station ID: %s'):format(BuilderState.stationId), 0.34)
-    drawText2D(0.02, 0.175, ('Department: %s'):format(currentDepartment()), 0.34)
-    drawText2D(0.02, 0.205, ('Station Type: %s'):format(currentStationType()), 0.34)
-    drawText2D(0.02, 0.235, ('Mode: %s'):format(currentMode()), 0.34)
-
-    if not isFirstPerson() then
-        drawText2D(0.02, 0.02, 'You need to be in first person to use builder', 0.42, 255, 80, 80, 255)
-    end
-
-    if currentMode() == 'place_prop' and IncidentNexusProps then
-        drawText2D(0.02, 0.265, ('Selected Prop: %s'):format(IncidentNexusProps:GetCurrentLabel()), 0.34)
-        drawText2D(0.02, 0.295, '[Mouse Wheel] Cycle Prop', 0.30)
-        drawText2D(0.02, 0.320, '[Left/Right Arrow] Rotate Prop', 0.30)
-    elseif currentMode() == 'select_door' and IncidentNexusDoors then
-        drawText2D(0.02, 0.265, ('Selected Doors: %s'):format(IncidentNexusDoors:GetSelectedDoorCount()), 0.34)
-        drawText2D(0.02, 0.295, ('Door Name: %s'):format(IncidentNexusDoors:GetCurrentDoorName()), 0.30)
-        drawText2D(0.02, 0.320, ('Apparatus: %s'):format(IncidentNexusDoors:GetCurrentApparatus()), 0.30)
-        drawText2D(0.02, 0.345, ('Editing: %s'):format(BuilderState.DoorEditField), 0.30)
-        drawText2D(0.02, 0.370, '[Mouse Wheel] Cycle Name/Apparatus', 0.30)
-        drawText2D(0.02, 0.395, '[/backin] toggles editor field', 0.30)
-    else
-        drawText2D(0.02, 0.295, '[Mouse Wheel] Cycle Builder Mode', 0.30)
-    end
-
-    drawText2D(0.02, 0.435, '[Left Click] Confirm / Place / Select', 0.30)
-    drawText2D(0.02, 0.460, '[Right Click] Remove / Undo', 0.30)
-    drawText2D(0.02, 0.485, '[E] Export Draft', 0.30)
-    drawText2D(0.02, 0.510, ('[/%s] Set Station Name'):format(Config.Commands.SetStationName or 'nexussetname'), 0.30)
-    drawText2D(0.02, 0.535, '[/incidentbuilder] Exit Builder', 0.30)
-end
-
-RegisterCommand(Config.Commands.Builder, function()
-    toggleBuilder()
-end, false)
-
-RegisterCommand(Config.Commands.SetStationName, function(_, args)
-    local name = table.concat(args or {}, ' ')
-    setStationName(name)
-end, false)
-
-RegisterCommand(Config.Commands.TestAlert, function()
-    TriggerServerEvent('incident-nexus:server:testAlert', 'test_station')
-end, false)
-
-RegisterCommand(Config.Commands.BayOpen, function()
-    notify('Bay open command triggered.')
-end, false)
-
-RegisterCommand(Config.Commands.BackIn, function()
-    if currentMode() ~= 'select_door' then
-        notify('Back-in command triggered.')
-        return
-    end
-
-    if BuilderState.DoorEditField == 'name' then
-        BuilderState.DoorEditField = 'apparatus'
-    else
-        BuilderState.DoorEditField = 'name'
-    end
-
-    notify(('Door edit field: %s'):format(BuilderState.DoorEditField))
-end, false)
-
-RegisterCommand('nexusamber', function()
-    if IncidentNexusWarningLights then
-        IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'idle')
-    end
-    notify(('Warning lights set to amber for station %s'):format(BuilderState.stationId))
-end, false)
-
-RegisterCommand('nexusred', function()
-    if IncidentNexusWarningLights then
-        IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'alert')
-    end
-    notify(('Warning lights set to red for station %s'):format(BuilderState.stationId))
-end, false)
-
-RegisterCommand('nexuslightsoff', function()
-    if IncidentNexusWarningLights then
-        IncidentNexusWarningLights:SetStationMode(BuilderState.stationId, 'off')
-    end
-    notify(('Warning lights turned off for station %s'):format(BuilderState.stationId))
-end, false)
-
-CreateThread(function()
-    Wait(1500)
-    TriggerServerEvent('incident-nexus:server:requestStations')
-end)
-
-CreateThread(function()
-    while true do
-        local sleep = 1000
-
-        if BuilderActive then
-            sleep = 0
-
-            local ped = PlayerPedId()
-            local coords = GetEntityCoords(ped)
-            local firstPerson = isFirstPerson()
-
-            hideBuilderWeapons()
-            disableBuilderControls()
-            setModeActivity()
-
-            drawText3D(coords.x, coords.y, coords.z + 1.0, 'Incident Nexus Builder')
-            drawBuilderMenu()
-
-            if firstPerson then
-                local mode = currentMode()
-
-                if (mode == 'place_prop' or mode == 'hide_prop') and IncidentNexusProps then
-                    IncidentNexusProps:Update()
-                elseif mode == 'select_door' and IncidentNexusDoors then
-                    IncidentNexusDoors:Update()
+            for k, v in pairs(value) do
+                local key
+                if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+                    key = k
+                else
+                    key = ("[%s]"):format(serializeValue(k, indent + 1))
                 end
 
-                if IsDisabledControlJustReleased(0, Config.Keys.ExportDraft) then
-                    createDraft()
-                end
-
-                if IsDisabledControlJustReleased(0, Config.Keys.Confirm) then
-                    handleConfirm()
-                end
-
-                if IsDisabledControlJustReleased(0, Config.Keys.Cancel) then
-                    handleCancel()
-                end
-
-                if IsDisabledControlJustReleased(0, Config.Keys.ScrollUp) then
-                    handleScroll(true)
-                end
-
-                if IsDisabledControlJustReleased(0, Config.Keys.ScrollDown) then
-                    handleScroll(false)
-                end
-
-                if IsDisabledControlJustReleased(0, Config.Keys.RotateLeft) and currentMode() == 'place_prop' and IncidentNexusProps then
-                    IncidentNexusProps:Rotate(false)
-                end
-
-                if IsDisabledControlJustReleased(0, Config.Keys.RotateRight) and currentMode() == 'place_prop' and IncidentNexusProps then
-                    IncidentNexusProps:Rotate(true)
-                end
+                lines[#lines + 1] = string.rep("    ", indent + 1) .. key .. " = " .. serializeValue(v, indent + 1) .. ","
             end
         end
 
-        Wait(sleep)
+        lines[#lines + 1] = spacing .. "}"
+        return table.concat(lines, "\n")
+    elseif type(value) == "string" then
+        return string.format("%q", value)
+    elseif type(value) == "number" or type(value) == "boolean" then
+        return tostring(value)
+    else
+        return "nil"
     end
-end)
+end
 
-RegisterNetEvent('incident-nexus:client:receiveStations', function(stations)
-    CachedStations = stations or {}
-    debugPrint(('Received %s stations.'):format(#CachedStations))
+local function stationToLua(data)
+    local exportData = {
+        id = data.id or "station_unknown",
+        name = data.name or "New Station",
+        department = data.department or "fire",
+        stationType = data.stationType or "fire_station",
+        coords = data.coords or { x = 0.0, y = 0.0, z = 0.0 },
+        heading = data.heading or 0.0,
+        props = data.props or {},
+        hiddenProps = data.hiddenProps or {},
+        doors = data.doors or {},
+        traffic = data.traffic or {},
+        screens = data.screens or {},
+        computers = data.computers or {},
+        warningLights = data.warningLights or {}
+    }
 
-    if IncidentNexusProps then
-        IncidentNexusProps:LoadStations(CachedStations)
+    return "return " .. serializeValue(exportData, 0) .. "\n"
+end
+
+local function ensureDraftFolder()
+    local keepPath = "draftlocations/.keep"
+    local existing = LoadResourceFile(ResourceName, keepPath)
+
+    if existing == nil then
+        SaveResourceFile(ResourceName, keepPath, "", -1)
     end
-end)
+end
 
-RegisterNetEvent('incident-nexus:client:receiveDrafts', function(drafts)
-    CachedDrafts = drafts or {}
-    debugPrint(('Received %s drafts.'):format(#CachedDrafts))
-end)
+local function saveDraftLuaFile(data)
+    local fileBase = sanitizeFileName(data.fileName or data.id or data.name or "station")
+    local fileName = ("%s.lua"):format(fileBase)
+    local path = ("draftlocations/%s"):format(fileName)
+    local content = stationToLua(data)
 
-RegisterNetEvent('incident-nexus:client:testAlert', function(stationId)
-    notify(('Test alert triggered for station: %s'):format(tostring(stationId)))
+    local ok = SaveResourceFile(ResourceName, path, content, -1)
+    return ok, fileName, path
+end
 
-    if IncidentNexusWarningLights then
-        IncidentNexusWarningLights:SetStationMode(stationId, 'alert')
+local function loadStationFile(resourceName, fileName)
+    local content = LoadResourceFile(resourceName, fileName)
+
+    if not content or content == "" then
+        PrintError(("Could not load station file %s from resource %s"):format(fileName, resourceName))
+        return nil
     end
 
-    SendNUIMessage({
-        action = 'showDispatch',
-        title = 'Dispatch Alert',
-        message = ('Tone-out triggered for %s'):format(tostring(stationId))
-    })
+    local chunk, err = load(content, ("@@%s/%s"):format(resourceName, fileName), "t", {})
+    if not chunk then
+        PrintError(("Failed to compile station file %s: %s"):format(fileName, err))
+        return nil
+    end
+
+    local ok, result = pcall(chunk)
+    if not ok then
+        PrintError(("Failed to execute station file %s: %s"):format(fileName, result))
+        return nil
+    end
+
+    if type(result) ~= "table" then
+        PrintError(("Station file %s did not return a table."):format(fileName))
+        return nil
+    end
+
+    return result
+end
+
+local function loadManifestStations()
+    Stations = {}
+
+    local state = GetResourceState(LOCATIONS_RESOURCE)
+    if state ~= "started" and state ~= "starting" then
+        PrintWarning(('Locations resource "%s" is not started. No manifest stations loaded.'):format(LOCATIONS_RESOURCE))
+        return
+    end
+
+    local count = GetNumResourceMetadata(LOCATIONS_RESOURCE, "locations")
+    if not count or count < 1 then
+        PrintWarning(('No locations metadata found in %s fxmanifest.lua'):format(LOCATIONS_RESOURCE))
+        return
+    end
+
+    for i = 0, count - 1 do
+        local fileName = GetResourceMetadata(LOCATIONS_RESOURCE, "locations", i)
+
+        if fileName and fileName ~= "" then
+            local stationData = loadStationFile(LOCATIONS_RESOURCE, fileName)
+
+            if stationData then
+                Stations[#Stations + 1] = stationData
+                PrintSuccess(("Loaded station from manifest: %s"):format(fileName))
+            end
+        end
+    end
+end
+
+RegisterNetEvent("incident-nexus:server:createStationDraft", function(data)
+    local src = source
+
+    if type(data) ~= "table" then
+        PrintError(("Invalid station draft data from source %s"):format(src))
+        return
+    end
+
+    data.id = data.id or generateId("station")
+    ensureDraftFolder()
+
+    local ok, fileName, path = saveDraftLuaFile(data)
+
+    if not ok then
+        PrintError(("Failed to save draft file: %s"):format(path))
+        TriggerClientEvent("incident-nexus:client:notify", src, ("Failed to export draft: %s"):format(fileName))
+        return
+    end
+
+    Drafts[#Drafts + 1] = {
+        id = data.id,
+        name = data.name or fileName,
+        fileName = fileName,
+        path = path,
+        createdAt = os.time()
+    }
+
+    PrintSuccess(("Draft exported: %s"):format(path))
+    TriggerClientEvent("incident-nexus:client:notify", src, ("Draft exported as %s"):format(fileName))
 end)
 
-RegisterNetEvent('incident-nexus:client:notify', function(message)
-    notify(message)
+RegisterNetEvent("incident-nexus:server:requestStations", function()
+    local src = source
+    loadManifestStations()
+    TriggerClientEvent("incident-nexus:client:receiveStations", src, Stations)
+end)
+
+RegisterNetEvent("incident-nexus:server:requestDrafts", function()
+    local src = source
+    TriggerClientEvent("incident-nexus:client:receiveDrafts", src, Drafts)
+end)
+
+RegisterNetEvent("incident-nexus:server:testAlert", function(stationId)
+    TriggerClientEvent("incident-nexus:client:testAlert", -1, stationId or "test_station")
+end)
+
+RegisterCommand("nexustestwrite", function(source)
+    ensureDraftFolder()
+    local ok = SaveResourceFile(ResourceName, "draftlocations/test_write.lua", "return {\n    test = true\n}\n", -1)
+    print(("[Incident Nexus] test write result: %s"):format(tostring(ok)))
+end, true)
+
+CreateThread(function()
+    math.randomseed(os.time())
+    StartupBanner()
+    ensureDraftFolder()
+    loadManifestStations()
+    Wait(1500)
+    VersionCheck()
 end)
