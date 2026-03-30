@@ -7,6 +7,7 @@ local LOCATIONS_RESOURCE = "nexus_locations"
 
 local Stations = {}
 local Drafts = {}
+local ActiveAlerts = {}
 
 local function PrintLine(color, text)
     print((color .. text .. "^7"))
@@ -237,6 +238,58 @@ local function loadManifestStations()
     end
 end
 
+local function getStationById(stationId)
+    for i = 1, #Stations do
+        if Stations[i].id == stationId then
+            return Stations[i]
+        end
+    end
+
+    return nil
+end
+
+local function buildAlertPayload(stationId, title, message, alertType)
+    local station = getStationById(stationId)
+
+    return {
+        id = generateId("alert"),
+        stationId = stationId,
+        stationName = station and station.name or stationId,
+        title = title or "ACTIVE ALERT",
+        message = message or "Units respond immediately",
+        alertType = alertType or "general",
+        createdAt = os.time()
+    }
+end
+
+local function activateAlert(payload)
+    if not payload or not payload.stationId then
+        return
+    end
+
+    ActiveAlerts[payload.stationId] = payload
+
+    TriggerClientEvent("incident-nexus:client:testAlert", -1, payload.stationId)
+    TriggerClientEvent("incident-nexus:client:setStationScreenAlert", -1, payload.stationId, payload.title, payload.message)
+    TriggerClientEvent("incident-nexus:client:setStationWarningLightMode", -1, payload.stationId, "alert")
+
+    PrintSuccess(("Activated alert for station %s: %s"):format(payload.stationId, payload.title or "ACTIVE ALERT"))
+end
+
+local function clearAlert(stationId)
+    if not stationId or not ActiveAlerts[stationId] then
+        return false
+    end
+
+    ActiveAlerts[stationId] = nil
+
+    TriggerClientEvent("incident-nexus:client:setStationScreenIdle", -1, stationId)
+    TriggerClientEvent("incident-nexus:client:setStationWarningLightMode", -1, stationId, "idle")
+
+    PrintSuccess(("Cleared alert for station %s"):format(stationId))
+    return true
+end
+
 RegisterNetEvent("incident-nexus:server:createStationDraft", function(data)
     local src = source
 
@@ -280,13 +333,64 @@ RegisterNetEvent("incident-nexus:server:requestDrafts", function()
 end)
 
 RegisterNetEvent("incident-nexus:server:testAlert", function(stationId)
-    TriggerClientEvent("incident-nexus:client:testAlert", -1, stationId or "test_station")
+    local payload = buildAlertPayload(
+        stationId or "test_station",
+        "STRUCTURE FIRE",
+        "Units respond immediately",
+        "structure_fire"
+    )
+
+    activateAlert(payload)
+end)
+
+RegisterNetEvent("incident-nexus:server:activateAlert", function(stationId, title, message, alertType)
+    local payload = buildAlertPayload(stationId, title, message, alertType)
+    activateAlert(payload)
+end)
+
+RegisterNetEvent("incident-nexus:server:clearAlert", function(stationId)
+    clearAlert(stationId)
+end)
+
+RegisterNetEvent("incident-nexus:server:requestActiveAlerts", function()
+    local src = source
+    TriggerClientEvent("incident-nexus:client:receiveActiveAlerts", src, ActiveAlerts)
 end)
 
 RegisterCommand("nexustestwrite", function(source)
     ensureDraftFolder()
-    local ok = SaveResourceFile(ResourceName, "draftlocations/test_write.lua", "return {\n    test = true\n}\n", -1)
+    local ok = SaveResourceFile(GetCurrentResourceName(), "draftlocations/test_write.lua", "return {\n    test = true\n}\n", -1)
     print(("[Incident Nexus] test write result: %s"):format(tostring(ok)))
+end, true)
+
+RegisterCommand("nexusserveralert", function(source, args)
+    local stationId = args[1]
+    if not stationId or stationId == "" then
+        PrintWarning("Usage: nexusserveralert <stationId> [title] [message]")
+        return
+    end
+
+    local title = args[2] or "STRUCTURE FIRE"
+    local message = "Units respond immediately"
+
+    if #args >= 3 then
+        message = table.concat(args, " ", 3)
+    end
+
+    local payload = buildAlertPayload(stationId, title, message, "manual")
+    activateAlert(payload)
+end, true)
+
+RegisterCommand("nexusclearalert", function(source, args)
+    local stationId = args[1]
+    if not stationId or stationId == "" then
+        PrintWarning("Usage: nexusclearalert <stationId>")
+        return
+    end
+
+    if not clearAlert(stationId) then
+        PrintWarning(("No active alert found for station %s"):format(stationId))
+    end
 end, true)
 
 CreateThread(function()
