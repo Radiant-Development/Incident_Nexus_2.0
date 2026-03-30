@@ -1,7 +1,7 @@
 local ResourceName = GetCurrentResourceName()
 
 -- Locked under escrow
-local VERSION = "1.4.0"
+local VERSION = "1.5.6"
 local VERSION_URL = "https://github.com/Radiant-Development/Incident_Nexus_2.0/blob/main/version.json"
 local LOCATIONS_RESOURCE = "nexus_locations"
 
