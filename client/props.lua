@@ -103,7 +103,7 @@ local function normalToRotation(normal, heading)
     if math.abs(normal.z) < 0.5 then
         pitch = 0.0
         roll = 0.0
-        yaw = (heading or 0.0)
+        yaw = heading or 0.0
     end
 
     return pitch, roll, yaw
@@ -295,13 +295,21 @@ local function spawnSavedProp(propData, storeLoaded)
         })
     end
 
-    if isLightType(propData.type) then
+    if isLightType(propData.type) and IncidentNexusWarningLights then
         IncidentNexusWarningLights:RegisterLight(
             propData.id or ('loaded_%s'):format(#PropState.LoadedProps + 1),
             propData.stationId or 'unknown_station',
             obj,
             propData.mode or 'idle',
             propData.type
+        )
+    end
+
+    if propData.type == 'dispatch_screen' and IncidentNexusScreens then
+        IncidentNexusScreens:RegisterScreen(
+            propData.id or ('screen_%s'):format(#PropState.LoadedProps + 1),
+            propData.stationId or 'unknown_station',
+            obj
         )
     end
 
@@ -361,7 +369,7 @@ local function placeProp(stationId)
         data = propData
     })
 
-    if isLightType(propData.type) then
+    if isLightType(propData.type) and IncidentNexusWarningLights then
         IncidentNexusWarningLights:RegisterLight(
             propData.id,
             propData.stationId,
@@ -369,6 +377,10 @@ local function placeProp(stationId)
             propData.mode or 'idle',
             propData.type
         )
+    end
+
+    if propData.type == 'dispatch_screen' and IncidentNexusScreens then
+        IncidentNexusScreens:RegisterScreen(propData.id, propData.stationId, obj)
     end
 
     debugPrint(('Placed %s for station %s'):format(prop.label, propData.stationId))
@@ -384,8 +396,12 @@ local function removeLast()
         DeleteEntity(last.entity)
     end
 
-    if last.data and last.data.id then
+    if last.data and last.data.id and IncidentNexusWarningLights then
         IncidentNexusWarningLights:RemoveLight(last.data.id)
+    end
+
+    if last.data and last.data.id and IncidentNexusScreens then
+        IncidentNexusScreens:RemoveScreen(last.data.id)
     end
 
     table.remove(PropState.PlacedProps, #PropState.PlacedProps)
@@ -486,7 +502,13 @@ function IncidentNexusProps:HideBuilderPlacedProps()
         end
     end
 
-    IncidentNexusWarningLights:ClearAll()
+    if IncidentNexusWarningLights then
+        IncidentNexusWarningLights:ClearAll()
+    end
+
+    if IncidentNexusScreens then
+        IncidentNexusScreens:ClearAll()
+    end
 end
 
 function IncidentNexusProps:LoadStations(stations)
@@ -498,7 +520,14 @@ function IncidentNexusProps:LoadStations(stations)
     end
 
     PropState.LoadedProps = {}
-    IncidentNexusWarningLights:ClearAll()
+
+    if IncidentNexusWarningLights then
+        IncidentNexusWarningLights:ClearAll()
+    end
+
+    if IncidentNexusScreens then
+        IncidentNexusScreens:ClearAll()
+    end
 
     if type(stations) ~= 'table' then
         return
